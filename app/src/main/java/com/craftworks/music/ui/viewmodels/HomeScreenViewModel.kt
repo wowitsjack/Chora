@@ -5,9 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import com.craftworks.music.data.repository.AlbumRepository
+import com.craftworks.music.data.repository.SongRepository
 import com.craftworks.music.managers.DataRefreshManager
 import com.craftworks.music.managers.NavidromeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -21,7 +23,8 @@ import javax.inject.Inject
 
 @HiltViewModel
 class HomeScreenViewModel @Inject constructor(
-    private val albumRepository: AlbumRepository
+    private val albumRepository: AlbumRepository,
+    private val songRepository: SongRepository
 ) : ViewModel() {
     private val _recentlyPlayedAlbums = MutableStateFlow<List<MediaItem>>(emptyList())
     val recentlyPlayedAlbums: StateFlow<List<MediaItem>> = _recentlyPlayedAlbums.asStateFlow()
@@ -38,8 +41,12 @@ class HomeScreenViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _discoveryMixState = MutableStateFlow<DiscoveryMixState>(DiscoveryMixState.Idle)
+    val discoveryMixState: StateFlow<DiscoveryMixState> = _discoveryMixState.asStateFlow()
+
     // Track active load job to prevent redundant concurrent loads
     private var loadJob: Job? = null
+    private var loadGeneration = 0L
 
     init {
         loadHomeScreenData()
@@ -51,7 +58,8 @@ class HomeScreenViewModel @Inject constructor(
                     loadHomeScreenData()
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                if (e is CancellationException) throw e
+                Log.e("HomeScreenViewModel", "Data-source refresh observer failed", e)
             }
         }
 
@@ -68,12 +76,14 @@ class HomeScreenViewModel @Inject constructor(
                         }
                     }
             } catch (e: Exception) {
-                e.printStackTrace()
+                if (e is CancellationException) throw e
+                Log.e("HomeScreenViewModel", "Provider observer failed", e)
             }
         }
     }
 
     fun loadHomeScreenData(forceRefresh: Boolean = false) {
+        val generation = ++loadGeneration
         // Cancel any existing load to prevent redundant concurrent loads
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -92,9 +102,12 @@ class HomeScreenViewModel @Inject constructor(
                     _shuffledAlbums.value = shuffledDeferred.await()
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                if (e is CancellationException) throw e
+                Log.e("HomeScreenViewModel", "Failed to load home data", e)
             } finally {
-                _isLoading.value = false
+                if (generation == loadGeneration) {
+                    _isLoading.value = false
+                }
             }
         }
     }
@@ -102,4 +115,42 @@ class HomeScreenViewModel @Inject constructor(
     suspend fun getAlbumSongs(albumId: String): List<MediaItem> {
         return albumRepository.getAlbum(albumId) ?: emptyList()
     }
+
+    fun buildDiscoveryMix() {
+        if (_discoveryMixState.value is DiscoveryMixState.Loading) return
+
+        viewModelScope.launch {
+            _discoveryMixState.value = DiscoveryMixState.Loading
+            try {
+                val songs = songRepository.getDiscoveryMix(DISCOVERY_MIX_SIZE)
+                _discoveryMixState.value = if (songs.isEmpty()) {
+                    DiscoveryMixState.Empty
+                } else {
+                    DiscoveryMixState.Ready(songs)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e("HomeScreenViewModel", "Could not build discovery mix", e)
+                _discoveryMixState.value = DiscoveryMixState.Error
+            }
+        }
+    }
+
+    fun consumeDiscoveryMix() {
+        if (_discoveryMixState.value is DiscoveryMixState.Ready) {
+            _discoveryMixState.value = DiscoveryMixState.Idle
+        }
+    }
+
+    companion object {
+        const val DISCOVERY_MIX_SIZE = 50
+    }
+}
+
+sealed interface DiscoveryMixState {
+    data object Idle : DiscoveryMixState
+    data object Loading : DiscoveryMixState
+    data class Ready(val songs: List<MediaItem>) : DiscoveryMixState
+    data object Empty : DiscoveryMixState
+    data object Error : DiscoveryMixState
 }

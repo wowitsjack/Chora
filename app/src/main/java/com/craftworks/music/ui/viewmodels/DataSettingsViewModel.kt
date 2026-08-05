@@ -8,6 +8,7 @@ import com.craftworks.music.data.database.dao.SongDao
 import com.craftworks.music.data.repository.SyncRepository
 import com.craftworks.music.data.repository.SyncState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -67,6 +68,7 @@ class DataSettingsViewModel @Inject constructor(
                 syncRepository.resumeSync()
                 syncRepository.syncAll(resumeFromPause = true)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             }
         }
@@ -77,6 +79,7 @@ class DataSettingsViewModel @Inject constructor(
             try {
                 syncRepository.syncAll()
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             }
         }
@@ -87,9 +90,25 @@ class DataSettingsViewModel @Inject constructor(
             try {
                 syncRepository.syncAll(forceRefresh = true)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             }
         }
+    }
+
+    fun retryFailedSync() {
+        viewModelScope.launch {
+            try {
+                syncRepository.syncAll(retryFromFailure = true)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun dismissSyncError() {
+        syncRepository.dismissSyncError()
     }
 
     fun clearAllCache() {
@@ -97,6 +116,7 @@ class DataSettingsViewModel @Inject constructor(
             try {
                 syncRepository.clearAllCache()
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             }
         }

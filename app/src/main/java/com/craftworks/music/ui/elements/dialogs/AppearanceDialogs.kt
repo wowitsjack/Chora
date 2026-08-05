@@ -50,6 +50,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.craftworks.music.R
 import com.craftworks.music.data.BottomNavItem
+import com.craftworks.music.data.defaultBottomNavItems
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.ui.elements.bounceClick
 import com.craftworks.music.ui.playing.NowPlayingBackground
@@ -91,7 +92,9 @@ fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
     val context = LocalContext.current.applicationContext
     val coroutineScope = rememberCoroutineScope()
     val settingsManager = remember { AppearanceSettingsManager(context) }
-    val username by settingsManager.usernameFlow.collectAsStateWithLifecycle("Username")
+    val username by settingsManager.usernameFlow.collectAsStateWithLifecycle(
+        AppearanceSettingsManager.DEFAULT_USERNAME
+    )
     var usernameTextField by remember(username) { mutableStateOf(username) }
 
     AlertDialog(
@@ -374,29 +377,7 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
                     coroutineScope.launch {
                         settingsManager.setBottomNavItems(
                             //region Default Values
-                            mutableStateListOf(
-                                BottomNavItem(
-                                    "Home", R.drawable.rounded_home_24, "home_screen"
-                                ), BottomNavItem(
-                                    "Albums",
-                                    R.drawable.rounded_library_music_24,
-                                    "album_screen"
-                                ), BottomNavItem(
-                                    "Songs",
-                                    R.drawable.round_music_note_24,
-                                    "songs_screen"
-                                ), BottomNavItem(
-                                    "Artists",
-                                    R.drawable.rounded_artist_24,
-                                    "artists_screen"
-                                ), BottomNavItem(
-                                    "Radios", R.drawable.rounded_radio, "radio_screen"
-                                ), BottomNavItem(
-                                    "Playlists",
-                                    R.drawable.placeholder,
-                                    "playlist_screen"
-                                )
-                            ) //endregion
+                            mutableStateListOf(*defaultBottomNavItems().toTypedArray())
                         )
                     }
                     setShowDialog(false)

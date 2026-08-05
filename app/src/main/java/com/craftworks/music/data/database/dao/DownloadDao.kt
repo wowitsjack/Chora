@@ -23,6 +23,9 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE status IN ('QUEUED', 'DOWNLOADING', 'PAUSED') ORDER BY queuedAt ASC")
     fun getActiveDownloads(): Flow<List<DownloadEntity>>
 
+    @Query("SELECT * FROM downloads WHERE status = 'QUEUED' ORDER BY queuedAt ASC")
+    suspend fun getQueuedDownloadsOnce(): List<DownloadEntity>
+
     @Query("SELECT * FROM downloads WHERE status = 'COMPLETED' ORDER BY completedAt DESC")
     fun getCompletedDownloads(): Flow<List<DownloadEntity>>
 
@@ -62,16 +65,30 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: String, status: DownloadStatus)
 
-    @Query("UPDATE downloads SET status = :status, progress = :progress, bytesDownloaded = :bytesDownloaded WHERE id = :id")
-    suspend fun updateProgress(id: String, status: DownloadStatus, progress: Float, bytesDownloaded: Long)
+    @Query("UPDATE downloads SET progress = :progress, bytesDownloaded = :bytesDownloaded, totalBytes = :totalBytes WHERE id = :id AND status = 'DOWNLOADING'")
+    suspend fun updateProgress(
+        id: String,
+        progress: Float,
+        bytesDownloaded: Long,
+        totalBytes: Long
+    )
 
-    @Query("UPDATE downloads SET status = 'COMPLETED', completedAt = :completedAt, localFilePath = :localFilePath, progress = 1.0 WHERE id = :id")
-    suspend fun markCompleted(id: String, completedAt: Long, localFilePath: String)
+    @Query("UPDATE downloads SET status = 'COMPLETED', completedAt = :completedAt, localFilePath = :localFilePath, progress = 1.0, bytesDownloaded = :totalBytes, totalBytes = :totalBytes WHERE id = :id AND status = 'DOWNLOADING'")
+    suspend fun markCompleted(
+        id: String,
+        completedAt: Long,
+        localFilePath: String,
+        totalBytes: Long
+    ): Int
 
-    @Query("UPDATE downloads SET status = 'FAILED', failureReason = :reason, retryCount = retryCount + 1 WHERE id = :id")
+    @Query("UPDATE downloads SET status = 'FAILED', failureReason = :reason, retryCount = retryCount + 1 WHERE id = :id AND status = 'DOWNLOADING'")
     suspend fun markFailed(id: String, reason: String)
 
-    @Query("UPDATE downloads SET status = 'QUEUED', failureReason = NULL WHERE id = :id")
+    @Query(
+        "UPDATE downloads SET status = 'QUEUED', progress = 0, bytesDownloaded = 0, " +
+            "totalBytes = 0, localFilePath = NULL, completedAt = NULL, failureReason = NULL, " +
+            "retryCount = 0 WHERE id = :id"
+    )
     suspend fun resetForRetry(id: String)
 
     @Query("UPDATE downloads SET status = 'PAUSED' WHERE status IN ('QUEUED', 'DOWNLOADING')")

@@ -1,6 +1,9 @@
 package com.craftworks.music.data
 
+import com.craftworks.music.data.model.MediaCategory
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.net.URI
 
 @Serializable
 data class NavidromeProvider (
@@ -18,4 +21,54 @@ data class NavidromeProvider (
 data class NavidromeLibrary (
     val id: Int = 0,
     var name:String,
+    @SerialName("type")
+    val kind: String? = null,
 )
+
+val NavidromeLibrary.mediaCategory: String
+    get() = MediaCategory.resolve(explicit = kind, libraryName = name)
+
+internal fun normalizeNavidromeServerUrl(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return null
+
+    val candidate = when {
+        trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+        "://" in trimmed -> return null
+        else -> "http://$trimmed"
+    }
+
+    val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
+    if (uri.scheme?.lowercase() !in setOf("http", "https")) return null
+    if (uri.host.isNullOrBlank() || uri.userInfo != null || uri.query != null || uri.fragment != null) {
+        return null
+    }
+
+    return candidate.trimEnd('/')
+}
+
+internal fun navidromeServerUrlConnectionProblem(serverUrl: String): String? {
+    val normalized = normalizeNavidromeServerUrl(serverUrl) ?: return "Invalid URL"
+    val host = URI(normalized).host?.lowercase() ?: return "Invalid URL"
+    return if (host.isDeviceLoopbackHost()) {
+        "Loopback URL points to this device"
+    } else {
+        null
+    }
+}
+
+internal fun requireUsableNavidromeServerUrl(serverUrl: String): String {
+    val normalized = normalizeNavidromeServerUrl(serverUrl)
+        ?: throw IllegalArgumentException("Invalid URL")
+    navidromeServerUrlConnectionProblem(normalized)?.let { problem ->
+        throw IllegalArgumentException(problem)
+    }
+    return normalized
+}
+
+private fun String.isDeviceLoopbackHost(): Boolean =
+    this == "localhost" ||
+        this == "127.0.0.1" ||
+        this == "::1" ||
+        this == "0:0:0:0:0:0:0:1"

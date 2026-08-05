@@ -6,6 +6,7 @@ import com.craftworks.music.data.database.ChoraDatabase
 import com.craftworks.music.data.database.Migrations
 import com.craftworks.music.data.database.dao.AlbumDao
 import com.craftworks.music.data.database.dao.AlbumPaletteDao
+import com.craftworks.music.data.database.dao.AudiobookProgressDao
 import com.craftworks.music.data.database.dao.ArtistDao
 import com.craftworks.music.data.database.dao.DownloadDao
 import com.craftworks.music.data.database.dao.OfflineSongDao
@@ -74,5 +75,11 @@ object DatabaseModule {
     @Singleton
     fun provideAlbumPaletteDao(database: ChoraDatabase): AlbumPaletteDao {
         return database.albumPaletteDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideAudiobookProgressDao(database: ChoraDatabase): AudiobookProgressDao {
+        return database.audiobookProgressDao()
     }
 }

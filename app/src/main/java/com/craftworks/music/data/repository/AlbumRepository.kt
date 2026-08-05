@@ -9,8 +9,10 @@ import com.craftworks.music.data.database.entity.toMediaDataSong
 import com.craftworks.music.data.datasource.local.LocalDataSource
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import com.craftworks.music.data.model.toMediaItem
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.managers.LocalProviderManager
 import com.craftworks.music.managers.NavidromeManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -37,8 +39,16 @@ class AlbumRepository @Inject constructor(
         if (NavidromeManager.checkActiveServers())
             deferredAlbums.add(async {
                 try {
-                    navidromeDataSource.getNavidromeAlbums(sort, size, offset, ignoreCachedResponse)
+                    val libraryIds = NavidromeManager.getEnabledLibraryIdsForCurrentServer(MediaCategory.MUSIC)
+                    if (libraryIds.isEmpty()) emptyList() else navidromeDataSource.getNavidromeAlbums(
+                        sort,
+                        size,
+                        offset,
+                        ignoreCachedResponse,
+                        musicFolderIds = libraryIds
+                    ).filter { it.mediaMetadata.extras?.getString("mediaCategory") != MediaCategory.AUDIOBOOK }
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     Log.e("AlbumRepository", "Failed to fetch Navidrome albums", e)
                     emptyList()
                 }
@@ -50,6 +60,7 @@ class AlbumRepository @Inject constructor(
                     try {
                         localDataSource.getLocalAlbums(sort)
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         Log.e("AlbumRepository", "Failed to fetch local albums", e)
                         emptyList()
                     }
@@ -65,14 +76,27 @@ class AlbumRepository @Inject constructor(
         } else {
             // Cache-first strategy: check Room database first
             if (!ignoreCachedResponse) {
-                val cachedSongs = songDao.getSongsByAlbumOnce(albumId)
+                val album = albumDao.getAlbumById(albumId)
+                if (album?.mediaCategory == MediaCategory.AUDIOBOOK) {
+                    return@coroutineScope emptyList()
+                }
+                val cachedById = songDao.getSongsByAlbumOnce(albumId)
+                val cachedSongs = if (cachedById.isNotEmpty()) {
+                    cachedById
+                } else {
+                    album?.name?.takeIf { it.isNotBlank() }
+                        ?.let { songDao.getSongsByAlbumNameOnce(it) }
+                        .orEmpty()
+                }
                 if (cachedSongs.isNotEmpty()) {
-                    val album = albumDao.getAlbumById(albumId)
                     return@coroutineScope listOfNotNull(album?.toMediaDataAlbum()?.toMediaItem()) +
                         cachedSongs.map { it.toMediaDataSong().toMediaItem() }
                 }
             }
             navidromeDataSource.getNavidromeAlbum(albumId, ignoreCachedResponse)
+                ?.filter { item ->
+                    item.mediaMetadata.extras?.getString("mediaCategory") != MediaCategory.AUDIOBOOK
+                }
         }
     }
 
@@ -84,6 +108,7 @@ class AlbumRepository @Inject constructor(
                 try {
                     localDataSource.searchLocalAlbums(query)
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     Log.e("AlbumRepository", "Failed to search local albums", e)
                     emptyList()
                 }
@@ -92,8 +117,13 @@ class AlbumRepository @Inject constructor(
         if (NavidromeManager.checkActiveServers())
             deferredAlbums.add(async {
                 try {
-                    navidromeDataSource.searchNavidromeAlbums(query)
+                    val libraryIds = NavidromeManager.getEnabledLibraryIdsForCurrentServer(MediaCategory.MUSIC)
+                    if (libraryIds.isEmpty()) emptyList() else navidromeDataSource.searchNavidromeAlbums(
+                        query,
+                        musicFolderIds = libraryIds
+                    ).filter { it.mediaMetadata.extras?.getString("mediaCategory") != MediaCategory.AUDIOBOOK }
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     Log.e("AlbumRepository", "Failed to search Navidrome albums", e)
                     emptyList()
                 }

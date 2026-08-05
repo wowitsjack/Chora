@@ -1,6 +1,8 @@
 package com.craftworks.music.managers
 
 import android.util.Log
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import com.craftworks.music.player.ChoraMediaLibraryService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+@OptIn(UnstableApi::class)
 object SleepTimerManager {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Main + supervisorJob)

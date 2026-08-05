@@ -20,3 +20,4 @@ local.properties
 .claude*
 CLAUDE.md
 CHANGELOG_SUMMARY.md
+.omx/

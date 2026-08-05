@@ -52,6 +52,7 @@ import com.craftworks.music.ui.util.LayoutMode
 import com.craftworks.music.ui.util.rememberFoldableState
 import com.craftworks.music.ui.viewmodels.DownloadViewModel
 import com.craftworks.music.ui.viewmodels.SongsScreenViewModel
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -61,7 +62,8 @@ import kotlinx.coroutines.launch
 fun SongsScreen(
     mediaController: MediaController? = null,
     viewModel: SongsScreenViewModel = hiltViewModel(),
-    downloadViewModel: DownloadViewModel = hiltViewModel()
+    downloadViewModel: DownloadViewModel = hiltViewModel(),
+    songActionsViewModel: SongActionsViewModel = hiltViewModel()
 ) {
     val allSongsList by viewModel.allSongs.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
@@ -145,9 +147,10 @@ fun SongsScreen(
                             SongsHorizontalColumn(
                                 songList = searchResults,
                                 onSongSelected = { songs, index ->
-                                    println("Starting song at index: $index")
                                     coroutineScope.launch {
-                                        SongHelper.play(songs, index, mediaController)
+                                        songs.getOrNull(index)?.let {
+                                            SongHelper.playNow(it, mediaController)
+                                        }
                                     }
                                 },
                                 isSearch = true,
@@ -158,7 +161,8 @@ fun SongsScreen(
                                 },
                                 onDownload = { song ->
                                     downloadViewModel.queueDownload(song.mediaMetadata)
-                                }
+                                },
+                                onInstantMix = songActionsViewModel::buildInstantMix
                             )
                         }
                     },
@@ -191,9 +195,10 @@ fun SongsScreen(
                 SongsHorizontalColumn(
                     songList = allSongsList,
                     onSongSelected = { songs, index ->
-                        println("Starting song at index: $index")
                         coroutineScope.launch {
-                            SongHelper.play(songs, index, mediaController)
+                            songs.getOrNull(index)?.let {
+                                SongHelper.playNow(it, mediaController)
+                            }
                         }
                     },
                     isSearch = false,
@@ -204,7 +209,8 @@ fun SongsScreen(
                     },
                     onDownload = { song ->
                         downloadViewModel.queueDownload(song.mediaMetadata)
-                    }
+                    },
+                    onInstantMix = songActionsViewModel::buildInstantMix
                 )
             }
         }

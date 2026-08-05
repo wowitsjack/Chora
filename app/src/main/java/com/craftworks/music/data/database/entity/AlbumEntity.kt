@@ -3,8 +3,10 @@ package com.craftworks.music.data.database.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 import com.craftworks.music.data.model.Genre
 import com.craftworks.music.data.model.MediaData
+import com.craftworks.music.data.model.MediaCategory
 
 @Entity(
     tableName = "albums",
@@ -13,7 +15,9 @@ import com.craftworks.music.data.model.MediaData
         Index(value = ["starred"]),
         Index(value = ["created"]),
         Index(value = ["name"]),
-        Index(value = ["year"])
+        Index(value = ["year"]),
+        Index(value = ["mediaCategory"]),
+        Index(value = ["musicFolderId"])
     ]
 )
 data class AlbumEntity(
@@ -35,6 +39,9 @@ data class AlbumEntity(
     val genre: String?,
     val genresJson: String?,
     val starred: String?,
+    val musicFolderId: Int? = null,
+    @ColumnInfo(defaultValue = "'music'")
+    val mediaCategory: String = MediaCategory.MUSIC,
     val lastSyncedAt: Long = System.currentTimeMillis()
 )
 
@@ -63,7 +70,9 @@ fun AlbumEntity.toMediaDataAlbum(): MediaData.Album {
         genre = genre,
         genres = genres,
         starred = starred,
-        songs = null
+        songs = null,
+        musicFolderId = musicFolderId,
+        mediaCategory = mediaCategory
     )
 }
 
@@ -91,6 +100,8 @@ fun MediaData.Album.toEntity(): AlbumEntity {
         year = year,
         genre = genre,
         genresJson = genresJson,
-        starred = starred
+        starred = starred,
+        musicFolderId = musicFolderId,
+        mediaCategory = MediaCategory.resolve(explicit = mediaCategory)
     )
 }

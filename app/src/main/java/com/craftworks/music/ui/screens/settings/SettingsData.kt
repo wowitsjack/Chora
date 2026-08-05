@@ -71,6 +71,7 @@ fun S_DataScreen(
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val isPaused by viewModel.isPaused.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val hasSyncError = syncState.phase == SyncPhase.ERROR
     val songCount by viewModel.songCount.collectAsStateWithLifecycle()
     val albumCount by viewModel.albumCount.collectAsStateWithLifecycle()
     val artistCount by viewModel.artistCount.collectAsStateWithLifecycle()
@@ -135,9 +136,9 @@ fun S_DataScreen(
                 }
             }
 
-            // Sync Status Card (shown when syncing or paused)
+            // Sync Status Card (shown while active, paused, or waiting for error recovery)
             AnimatedVisibility(
-                visible = isSyncing || isPaused,
+                visible = isSyncing || isPaused || hasSyncError,
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {
@@ -146,10 +147,11 @@ fun S_DataScreen(
                         .fillMaxWidth()
                         .animateContentSize(),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isPaused)
-                            MaterialTheme.colorScheme.tertiaryContainer
-                        else
-                            MaterialTheme.colorScheme.primaryContainer
+                        containerColor = when {
+                            hasSyncError -> MaterialTheme.colorScheme.errorContainer
+                            isPaused -> MaterialTheme.colorScheme.tertiaryContainer
+                            else -> MaterialTheme.colorScheme.primaryContainer
+                        }
                     )
                 ) {
                     Column(
@@ -163,16 +165,21 @@ fun S_DataScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (isPaused) "Sync Paused" else "Syncing...",
+                                text = when {
+                                    hasSyncError -> "Sync needs attention"
+                                    isPaused -> "Sync paused"
+                                    else -> syncState.shortTitle
+                                },
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (isPaused)
-                                    MaterialTheme.colorScheme.onTertiaryContainer
-                                else
-                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                color = when {
+                                    hasSyncError -> MaterialTheme.colorScheme.onErrorContainer
+                                    isPaused -> MaterialTheme.colorScheme.onTertiaryContainer
+                                    else -> MaterialTheme.colorScheme.onPrimaryContainer
+                                }
                             )
 
-                            if (syncState.total > 0) {
+                            if (!hasSyncError && syncState.hasDeterminateProgress) {
                                 Text(
                                     text = "${syncState.percentage.toInt()}%",
                                     style = MaterialTheme.typography.titleLarge,
@@ -187,55 +194,58 @@ fun S_DataScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Progress bar
-                        val animatedProgress by animateFloatAsState(
-                            targetValue = if (syncState.total > 0)
-                                syncState.current.toFloat() / syncState.total
-                            else
-                                0f,
-                            animationSpec = tween(300),
-                            label = "sync_progress"
-                        )
+                        if (!hasSyncError) {
+                            // Progress bar
+                            val animatedProgress by animateFloatAsState(
+                                targetValue = if (syncState.hasDeterminateProgress)
+                                    syncState.current.toFloat() / syncState.total
+                                else
+                                    0f,
+                                animationSpec = tween(300),
+                                label = "sync_progress"
+                            )
 
-                        if (syncState.phase != SyncPhase.FETCHING_COUNTS) {
-                            LinearProgressIndicator(
-                                progress = { animatedProgress },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(RoundedCornerShape(4.dp)),
-                                color = if (isPaused)
-                                    MaterialTheme.colorScheme.tertiary
-                                else
-                                    MaterialTheme.colorScheme.primary,
-                                trackColor = if (isPaused)
-                                    MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.2f)
-                                else
-                                    MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
-                                strokeCap = StrokeCap.Round
-                            )
-                        } else {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(RoundedCornerShape(4.dp)),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
-                                strokeCap = StrokeCap.Round
-                            )
+                            if (syncState.hasDeterminateProgress) {
+                                LinearProgressIndicator(
+                                    progress = { animatedProgress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .clip(RoundedCornerShape(4.dp)),
+                                    color = if (isPaused)
+                                        MaterialTheme.colorScheme.tertiary
+                                    else
+                                        MaterialTheme.colorScheme.primary,
+                                    trackColor = if (isPaused)
+                                        MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.2f)
+                                    else
+                                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+                                    strokeCap = StrokeCap.Round
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .clip(RoundedCornerShape(4.dp)),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+                                    strokeCap = StrokeCap.Round
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
                         }
-
-                        Spacer(modifier = Modifier.height(8.dp))
 
                         // Phase info
                         Text(
                             text = syncState.displayText,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (isPaused)
-                                MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
-                            else
-                                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            color = when {
+                                hasSyncError -> MaterialTheme.colorScheme.onErrorContainer
+                                isPaused -> MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                                else -> MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            }
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -245,7 +255,27 @@ fun S_DataScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (isPaused) {
+                            if (hasSyncError) {
+                                Button(
+                                    onClick = { viewModel.retryFailedSync() },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Retry")
+                                }
+
+                                OutlinedButton(
+                                    onClick = { viewModel.dismissSyncError() },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Dismiss")
+                                }
+                            } else if (isPaused) {
                                 // Resume button
                                 Button(
                                     onClick = { viewModel.resumeSync() },
@@ -318,7 +348,7 @@ fun S_DataScreen(
 
             // Sync Actions (shown when not syncing)
             AnimatedVisibility(
-                visible = !isSyncing && !isPaused,
+                visible = !isSyncing && !isPaused && !hasSyncError,
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {

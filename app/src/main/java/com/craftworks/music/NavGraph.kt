@@ -51,6 +51,8 @@ import com.craftworks.music.ui.screens.AlbumDetails
 import com.craftworks.music.ui.screens.AlbumScreen
 import com.craftworks.music.ui.screens.ArtistDetails
 import com.craftworks.music.ui.screens.ArtistsScreen
+import com.craftworks.music.ui.screens.AudiobookDetailsScreen
+import com.craftworks.music.ui.screens.AudiobooksScreen
 import com.craftworks.music.ui.screens.HomeListsScreen
 import com.craftworks.music.ui.screens.HomeScreen
 import com.craftworks.music.ui.screens.PlaylistDetails
@@ -183,6 +185,19 @@ fun SetupNavGraph(
             val viewModel: RadioScreenViewModel = hiltViewModel()
             RadioScreen(mediaController, viewModel)
         }
+        composable(route = Screen.Audiobooks.route) {
+            AudiobooksScreen(navController, mediaController)
+        }
+        composable(
+            route = Screen.AudiobookDetails.route + "/{albumId}",
+            arguments = listOf(navArgument("albumId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            AudiobookDetailsScreen(
+                albumId = backStackEntry.arguments?.getString("albumId").orEmpty(),
+                navController = navController,
+                mediaController = mediaController
+            )
+        }
 
         //Albums
         composable(route = Screen.Albums.route) {
@@ -224,24 +239,36 @@ fun SetupNavGraph(
         }
         //Artist
         navigation(startDestination = Screen.Artists.route, route = "artists_graph") {
-            composable(route = Screen.Artists.route) {
-                val viewModel: ArtistsScreenViewModel = hiltViewModel()
+            composable(route = Screen.Artists.route) { backStackEntry ->
+                val graphEntry = remember(backStackEntry) {
+                    navController.getBackStackEntry("artists_graph")
+                }
+                val viewModel: ArtistsScreenViewModel = hiltViewModel(graphEntry)
                 ArtistsScreen(navController, mediaController, viewModel)
             }
-            composable(route = Screen.ArtistDetails.route) {
-                val viewModel: ArtistsScreenViewModel = hiltViewModel()
+            composable(route = Screen.ArtistDetails.route) { backStackEntry ->
+                val graphEntry = remember(backStackEntry) {
+                    navController.getBackStackEntry("artists_graph")
+                }
+                val viewModel: ArtistsScreenViewModel = hiltViewModel(graphEntry)
                 ArtistDetails(navController, mediaController, viewModel)
             }
         }
 
         //Playlists
         navigation(startDestination = Screen.Playlists.route, route = "playlists_graph") {
-            composable(route = Screen.Playlists.route) {
-                val viewModel: PlaylistScreenViewModel = hiltViewModel()
+            composable(route = Screen.Playlists.route) { backStackEntry ->
+                val graphEntry = remember(backStackEntry) {
+                    navController.getBackStackEntry("playlists_graph")
+                }
+                val viewModel: PlaylistScreenViewModel = hiltViewModel(graphEntry)
                 PlaylistScreen(navController, viewModel)
             }
-            composable(route = Screen.PlaylistDetails.route) {
-                val viewModel: PlaylistScreenViewModel = hiltViewModel()
+            composable(route = Screen.PlaylistDetails.route) { backStackEntry ->
+                val graphEntry = remember(backStackEntry) {
+                    navController.getBackStackEntry("playlists_graph")
+                }
+                val viewModel: PlaylistScreenViewModel = hiltViewModel(graphEntry)
                 PlaylistDetails(navController, mediaController, viewModel)
             }
         }

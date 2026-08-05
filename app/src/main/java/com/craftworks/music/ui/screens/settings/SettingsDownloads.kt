@@ -61,6 +61,9 @@ import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.data.database.entity.DownloadEntity
 import com.craftworks.music.data.database.entity.DownloadStatus
+import com.craftworks.music.ui.elements.activeDownloadSummary
+import com.craftworks.music.ui.elements.downloadProgressText
+import com.craftworks.music.ui.elements.isDownloadProgressDeterminate
 import com.craftworks.music.ui.viewmodels.DownloadViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -115,8 +118,7 @@ fun SettingsDownloads(
             Text(
                 text = when {
                     active.isNotEmpty() -> {
-                        val downloading = active.count { it.status == DownloadStatus.DOWNLOADING }
-                        "Downloading $downloading of ${active.size}"
+                        activeDownloadSummary(active)
                     }
                     completed.isNotEmpty() -> "${completed.size} downloaded"
                     else -> "No downloads"
@@ -338,19 +340,32 @@ private fun DownloadItemRow(
                 }
                 DownloadStatus.DOWNLOADING -> {
                     Column {
-                        LinearProgressIndicator(
-                            progress = { download.progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp)
-                                .height(4.dp)
-                                .clip(RoundedCornerShape(2.dp)),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.primaryContainer,
-                            strokeCap = StrokeCap.Round
-                        )
+                        if (isDownloadProgressDeterminate(download)) {
+                            LinearProgressIndicator(
+                                progress = { download.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.primaryContainer,
+                                strokeCap = StrokeCap.Round
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.primaryContainer,
+                                strokeCap = StrokeCap.Round
+                            )
+                        }
                         Text(
-                            text = "${(download.progress * 100).toInt()}%",
+                            text = downloadProgressText(download),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )

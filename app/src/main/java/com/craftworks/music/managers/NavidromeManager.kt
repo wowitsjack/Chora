@@ -8,6 +8,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.craftworks.music.data.NavidromeLibrary
 import com.craftworks.music.data.NavidromeProvider
+import com.craftworks.music.data.mediaCategory
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import com.craftworks.music.managers.LocalProviderManager.getAllFolders
 import com.craftworks.music.showNoProviderDialog
@@ -55,7 +56,7 @@ object NavidromeManager {
     private val _syncStatus = MutableStateFlow(false)
 
     fun addServer(server: NavidromeProvider) {
-        Log.d("NAVIDROME", "Added server $server")
+        Log.d("NAVIDROME", "Added Navidrome server")
         servers[server.id] = server
         // Set newly added server as current
         if (_currentServerId.value == null) {
@@ -94,6 +95,23 @@ object NavidromeManager {
             _libraries.value = libraries
         }
         saveServers()
+    }
+
+    fun reconcileCurrentServerLibraries(
+        fetchedLibraries: List<NavidromeLibrary>
+    ): List<Pair<NavidromeLibrary, Boolean>> {
+        val serverId = _currentServerId.value ?: return emptyList()
+        val server = servers[serverId] ?: return emptyList()
+        if (fetchedLibraries.isEmpty()) return server.libraryIds
+
+        val reconciled = reconcileNavidromeLibraries(
+            savedLibraries = server.libraryIds,
+            fetchedLibraries = fetchedLibraries
+        )
+        if (reconciled != server.libraryIds) {
+            setServerLibraries(serverId, reconciled)
+        }
+        return reconciled
     }
 
     fun toggleServerLibraryEnabled(serverId: String, libraryId: Int, isEnabled: Boolean) {
@@ -266,4 +284,29 @@ object NavidromeManager {
                 ?.map { it.first.id }
         } ?: emptyList()
     }
+
+    fun getEnabledLibrariesForCurrentServer(): List<NavidromeLibrary> {
+        return _currentServerId.value?.let { serverId ->
+            servers[serverId]?.libraryIds
+                ?.filter { it.second }
+                ?.map { it.first }
+        } ?: emptyList()
+    }
+
+    fun getEnabledLibraryIdsForCurrentServer(mediaCategory: String): List<Int> =
+        getEnabledLibrariesForCurrentServer()
+            .filter { it.mediaCategory == mediaCategory }
+            .map { it.id }
+}
+
+internal fun reconcileNavidromeLibraries(
+    savedLibraries: List<Pair<NavidromeLibrary, Boolean>>,
+    fetchedLibraries: List<NavidromeLibrary>
+): List<Pair<NavidromeLibrary, Boolean>> {
+    val savedEnabledById = savedLibraries.associate { (library, enabled) ->
+        library.id to enabled
+    }
+    return fetchedLibraries
+        .distinctBy(NavidromeLibrary::id)
+        .map { library -> library to (savedEnabledById[library.id] ?: true) }
 }

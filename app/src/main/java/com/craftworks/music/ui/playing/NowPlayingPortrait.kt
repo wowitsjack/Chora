@@ -57,6 +57,7 @@ import coil.compose.SubcomposeAsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.craftworks.music.R
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.managers.settings.ArtworkSettingsManager
 import com.craftworks.music.ui.elements.GeneratedAlbumArt
@@ -90,6 +91,7 @@ fun NowPlayingPortrait(
     val showMoreInfo by settingsManager.showMoreInfoFlow.collectAsStateWithLifecycle(true)
     val titleAlignment by settingsManager.nowPlayingTitleAlignment.collectAsStateWithLifecycle(NowPlayingTitleAlignment.LEFT)
     val stripTrackNumbers by settingsManager.stripTrackNumbersFromTitlesFlow.collectAsStateWithLifecycle(false)
+    val isAudiobook = metadata?.extras?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
 
     // Artwork settings for generated art fallback
     val generatedArtworkEnabled by artworkSettingsManager.generatedArtworkEnabledFlow.collectAsStateWithLifecycle(true)
@@ -146,6 +148,9 @@ fun NowPlayingPortrait(
                     label = "Crossfade between album art"
                 ) { artworkUri ->
                     val hasArtwork = artworkUri.isNotEmpty() && artworkUri != "null"
+                    val artworkIdentity = metadata?.extras?.getString("navidromeID")
+                        ?: metadata?.albumTitle?.toString()
+                        ?: metadata?.title?.toString()
 
                     // Check if we should use generated art based on fallback mode
                     val useGeneratedArt = when {
@@ -166,6 +171,7 @@ fun NowPlayingPortrait(
                         GeneratedAlbumArt(
                             title = metadata?.title?.toString() ?: "?",
                             artist = metadata?.artist?.toString(),
+                            album = artworkIdentity,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 32.dp)
@@ -197,6 +203,7 @@ fun NowPlayingPortrait(
                                     GeneratedAlbumArt(
                                         title = metadata?.title?.toString() ?: "?",
                                         artist = metadata?.artist?.toString(),
+                                        album = artworkIdentity,
                                         modifier = Modifier.fillMaxSize(),
                                         size = 400.dp,
                                         animate = true
@@ -316,35 +323,45 @@ fun NowPlayingPortrait(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 mediaController?.let {
-                    ShuffleButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size((32 * buttonScale).dp)
-                    )
+                    if (isAudiobook) {
+                        AudiobookTransportControls(
+                            controller = it,
+                            color = iconTextColor,
+                            playButtonSize = (92 * buttonScale).dp,
+                            chapterButtonSize = (48 * buttonScale).dp,
+                            seekButtonSize = (38 * buttonScale).dp
+                        )
+                    } else {
+                        ShuffleButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size((32 * buttonScale).dp)
+                        )
 
-                    PreviousSongButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size((48 * buttonScale).dp)
-                    )
+                        PreviousSongButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size((48 * buttonScale).dp)
+                        )
 
-                    PlayPauseButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size((92 * buttonScale).dp)
-                    )
+                        PlayPauseButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size((92 * buttonScale).dp)
+                        )
 
-                    NextSongButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size((48 * buttonScale).dp)
-                    )
+                        NextSongButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size((48 * buttonScale).dp)
+                        )
 
-                    RepeatButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size((32 * buttonScale).dp)
-                    )
+                        RepeatButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size((32 * buttonScale).dp)
+                        )
+                    }
                 }
             }
 
@@ -356,13 +373,22 @@ fun NowPlayingPortrait(
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 val secondaryButtonSize = (48 * buttonScale).dp
-                LyricsButton(iconTextColor, secondaryButtonSize)
+                if (isAudiobook && mediaController != null) {
+                    AudiobookSecondaryControls(
+                        controller = mediaController,
+                        color = iconTextColor,
+                        metadata = metadata,
+                        buttonSize = secondaryButtonSize
+                    )
+                } else {
+                    LyricsButton(iconTextColor, secondaryButtonSize)
 
-                FavoriteButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                    FavoriteButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
 
-                DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                    DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
 
-                PlayQueueButton(iconTextColor, secondaryButtonSize)
+                    PlayQueueButton(iconTextColor, secondaryButtonSize)
+                }
             }
         }
         //endregion

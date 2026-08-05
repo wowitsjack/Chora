@@ -89,6 +89,7 @@ fun SongsHorizontalColumn(
     enableSelection: Boolean = true,
     onDownloadSelected: ((List<MediaItem>) -> Unit)? = null,
     onDownload: ((MediaItem) -> Unit)? = null,
+    onInstantMix: (suspend (MediaItem) -> List<MediaItem>)? = null,
     // Performance: Accept offline song IDs set from parent
     offlineSongIds: Set<String> = emptySet()
 ){
@@ -221,6 +222,7 @@ fun SongsHorizontalColumn(
                                     onSongSelected(songsInGroup, index)
                                 },
                                 onDownload = onDownload,
+                                onInstantMix = onInstantMix,
                                 // Pass settings from parent for performance
                                 isOffline = offlineSongIds.contains(songId),
                                 generatedArtworkEnabled = generatedArtworkEnabled,
@@ -300,6 +302,7 @@ fun SongsHorizontalColumn(
                                     onSongSelected(songsInGroup, index)
                                 },
                                 onDownload = onDownload,
+                                onInstantMix = onInstantMix,
                                 // Pass settings from parent for performance
                                 isOffline = offlineSongIds.contains(songId),
                                 generatedArtworkEnabled = generatedArtworkEnabled,

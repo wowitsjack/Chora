@@ -1,61 +1,119 @@
 package com.craftworks.music.ui.elements
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import com.craftworks.music.R
 import com.craftworks.music.data.database.entity.DownloadEntity
 import com.craftworks.music.data.database.entity.DownloadStatus
 import kotlinx.coroutines.flow.Flow
-import kotlin.math.roundToInt
+import java.util.Locale
+
+internal data class DownloadIndicatorPresentation(
+    val statusText: String,
+    val progress: Float?,
+    val isIndeterminate: Boolean
+)
+
+internal fun activeDownloadSummary(downloads: List<DownloadEntity>): String {
+    val downloading = downloads.count { it.status == DownloadStatus.DOWNLOADING }
+    val queued = downloads.count { it.status == DownloadStatus.QUEUED }
+    val paused = downloads.count { it.status == DownloadStatus.PAUSED }
+    return when {
+        downloading > 0 -> "Downloading $downloading of ${downloads.size}"
+        queued > 0 -> if (queued == 1) "1 download waiting to start" else "$queued downloads waiting to start"
+        paused > 0 -> if (paused == 1) "1 download paused" else "$paused downloads paused"
+        else -> "No active downloads"
+    }
+}
+
+internal fun isDownloadProgressDeterminate(download: DownloadEntity): Boolean =
+    download.bytesDownloaded > 0L && download.totalBytes > 0L
+
+internal fun downloadProgressText(download: DownloadEntity): String = when {
+    download.bytesDownloaded <= 0L -> "Connecting to server"
+    download.totalBytes > 0L -> {
+        val percentage = (download.progress.coerceIn(0f, 1f) * 100).toInt().coerceAtLeast(1)
+        "$percentage% downloaded"
+    }
+    else -> "${formatDownloadBytes(download.bytesDownloaded)} downloaded"
+}
+
+internal fun downloadIndicatorPresentation(
+    download: DownloadEntity,
+    activeCount: Int
+): DownloadIndicatorPresentation = when (download.status) {
+    DownloadStatus.QUEUED -> DownloadIndicatorPresentation(
+        statusText = if (activeCount == 1) "Waiting to start" else "$activeCount downloads queued",
+        progress = null,
+        isIndeterminate = false
+    )
+
+    DownloadStatus.DOWNLOADING -> when {
+        isDownloadProgressDeterminate(download) -> DownloadIndicatorPresentation(
+            statusText = downloadProgressText(download),
+            progress = download.progress.coerceIn(0f, 1f),
+            isIndeterminate = false
+        )
+
+        else -> DownloadIndicatorPresentation(
+            statusText = downloadProgressText(download),
+            progress = null,
+            isIndeterminate = true
+        )
+    }
+
+    DownloadStatus.PAUSED -> DownloadIndicatorPresentation(
+        statusText = "Download paused",
+        progress = download.progress.coerceIn(0f, 1f),
+        isIndeterminate = false
+    )
+
+    DownloadStatus.COMPLETED -> DownloadIndicatorPresentation(
+        statusText = "Download complete",
+        progress = 1f,
+        isIndeterminate = false
+    )
+
+    DownloadStatus.FAILED -> DownloadIndicatorPresentation(
+        statusText = "Download failed",
+        progress = null,
+        isIndeterminate = false
+    )
+}
 
 @Composable
 fun FloatingDownloadIndicator(
@@ -64,13 +122,12 @@ fun FloatingDownloadIndicator(
     modifier: Modifier = Modifier
 ) {
     val downloads by activeDownloads.collectAsStateWithLifecycle(initialValue = emptyList())
-    val hasActiveDownloads = downloads.isNotEmpty()
-
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
+    val currentDownload = downloads.firstOrNull { it.status == DownloadStatus.DOWNLOADING }
+        ?: downloads.firstOrNull { it.status == DownloadStatus.QUEUED }
+        ?: downloads.firstOrNull()
 
     AnimatedVisibility(
-        visible = hasActiveDownloads,
+        visible = currentDownload != null,
         enter = scaleIn(
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -83,158 +140,98 @@ fun FloatingDownloadIndicator(
                 stiffness = Spring.StiffnessMedium
             )
         ) + fadeOut(),
-        modifier = modifier
-            .zIndex(10f)
-            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+        modifier = modifier.zIndex(10f)
     ) {
-        // Move animations INSIDE AnimatedVisibility so they only run when visible
-        val currentDownload = downloads.firstOrNull { it.status == DownloadStatus.DOWNLOADING }
-            ?: downloads.firstOrNull()
+        currentDownload?.let { download ->
+            val presentation = downloadIndicatorPresentation(download, downloads.size)
+            val title = if (downloads.size > 1) {
+                "${download.title} + ${downloads.size - 1} more"
+            } else {
+                download.title
+            }
 
-        // Animation for disc rotation - only runs when visible
-        val infiniteTransition = rememberInfiniteTransition(label = "disc_rotation")
-        val rotation by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 2000, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "rotation"
-        )
-
-        // Pulse animation for downloading state - only runs when visible
-        val pulse by infiniteTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 1.05f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1000),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "pulse"
-        )
-
-        // Calculate overall progress
-        val overallProgress = if (downloads.isNotEmpty()) {
-            downloads.map { it.progress }.average().toFloat()
-        } else 0f
-
-        val animatedProgress by animateFloatAsState(
-            targetValue = overallProgress,
-            animationSpec = tween(300),
-            label = "progress"
-        )
-
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        offsetX += dragAmount.x
-                        offsetY += dragAmount.y
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(18.dp),
+                tonalElevation = 4.dp,
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .widthIn(max = 250.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable(onClick = onClick)
+                    .semantics {
+                        contentDescription =
+                            "${presentation.statusText}. $title. Tap for download details."
                     }
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { onClick() }
-                    )
-                }
-        ) {
-            BadgedBox(
-                badge = {
-                    if (downloads.size > 1) {
-                        Badge(
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-                        ) {
-                            Text(
-                                text = if (downloads.size > 99) "99+" else downloads.size.toString()
-                            )
-                        }
-                    }
-                }
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .scale(pulse)
-                        .shadow(8.dp, CircleShape)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
-                    // Progress ring around the disc
-                    CircularProgressIndicator(
-                        progress = { animatedProgress },
-                        modifier = Modifier.size(56.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.primaryContainer,
-                        strokeWidth = 3.dp,
-                        strokeCap = StrokeCap.Round
-                    )
-
-                    // Vinyl disc with album art
                     Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .rotate(rotation)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier.size(34.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        // Album art or default disc
-                        if (currentDownload?.imageUrl != null) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalContext.current)
-                                    .data(currentDownload.imageUrl)
-                                    .size(with(LocalDensity.current) { 44.dp.toPx().toInt() })
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = "Downloading album art",
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape),
-                                contentScale = ContentScale.Crop
+                        when {
+                            presentation.isIndeterminate -> CircularProgressIndicator(
+                                modifier = Modifier.size(34.dp),
+                                strokeWidth = 3.dp,
+                                strokeCap = StrokeCap.Round
+                            )
+
+                            presentation.progress != null -> CircularProgressIndicator(
+                                progress = { presentation.progress },
+                                modifier = Modifier.size(34.dp),
+                                strokeWidth = 3.dp,
+                                strokeCap = StrokeCap.Round,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
                             )
                         }
 
-                        // Center hole (vinyl style)
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer)
+                        Icon(
+                            imageVector = androidx.compose.ui.graphics.vector.ImageVector.vectorResource(
+                                R.drawable.rounded_download_24
+                            ),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column {
+                        Text(
+                            text = presentation.statusText,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
-
-            Text(
-                text = "${(overallProgress * 100).toInt()}%",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                fontSize = 10.sp
-            )
         }
     }
 }
 
-@Composable
-fun FloatingDownloadIndicatorPositioned(
-    activeDownloads: Flow<List<DownloadEntity>>,
-    onClick: () -> Unit,
-    miniPlayerVisible: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val bottomOffset = if (miniPlayerVisible) 140.dp else 80.dp
-
-    FloatingDownloadIndicator(
-        activeDownloads = activeDownloads,
-        onClick = onClick,
-        modifier = modifier
-            .padding(16.dp)
-            .offset(y = -bottomOffset)
+private fun formatDownloadBytes(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> "${bytes / 1024L} KB"
+    bytes < 1024L * 1024L * 1024L -> String.format(
+        Locale.getDefault(),
+        "%.1f MB",
+        bytes / (1024.0 * 1024.0)
+    )
+    else -> String.format(
+        Locale.getDefault(),
+        "%.1f GB",
+        bytes / (1024.0 * 1024.0 * 1024.0)
     )
 }

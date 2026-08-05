@@ -7,6 +7,7 @@ import com.craftworks.music.data.database.dao.ArtistDao
 import com.craftworks.music.data.database.dao.SongDao
 import com.craftworks.music.data.datasource.local.LocalDataSource
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.managers.LocalProviderManager
 import com.craftworks.music.managers.NavidromeManager
 import kotlinx.coroutines.Deferred
@@ -15,7 +16,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
-import java.time.Instant
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,7 +38,11 @@ class StarredRepository @Inject constructor(
         if (NavidromeManager.checkActiveServers())
             deferredStarred.add(async {
                 try {
-                    navidromeDataSource.getNavidromeStarred(ignoreCachedResponse)
+                    val libraryIds = NavidromeManager.getEnabledLibraryIdsForCurrentServer(MediaCategory.MUSIC)
+                    if (libraryIds.isEmpty()) emptyList() else navidromeDataSource.getNavidromeStarred(
+                        ignoreCachedResponse,
+                        musicFolderIds = libraryIds
+                    ).filter { it.mediaMetadata.extras?.getString("mediaCategory") != MediaCategory.AUDIOBOOK }
                 } catch (e: Exception) {
                     Log.e("StarredRepository", "Failed to fetch Navidrome starred items", e)
                     emptyList()
@@ -60,7 +68,12 @@ class StarredRepository @Inject constructor(
                 val success = navidromeDataSource.starNavidromeItem(itemId, ignoreCachedResponse)
                 if (success) {
                     // Update local database for immediate UI feedback
-                    val starredTimestamp = Instant.now().toString()
+                    val starredTimestamp = SimpleDateFormat(
+                        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                        Locale.US
+                    ).apply {
+                        timeZone = TimeZone.getTimeZone("UTC")
+                    }.format(Date())
                     // Update all tables - only one will match, others are no-ops
                     songDao.updateStarred(itemId, starredTimestamp)
                     albumDao.updateStarred(itemId, starredTimestamp)

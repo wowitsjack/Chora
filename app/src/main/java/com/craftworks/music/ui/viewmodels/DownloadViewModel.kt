@@ -1,11 +1,13 @@
 package com.craftworks.music.ui.viewmodels
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaMetadata
 import com.craftworks.music.data.database.entity.DownloadEntity
 import com.craftworks.music.data.repository.DownloadRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +19,18 @@ import javax.inject.Inject
 class DownloadViewModel @Inject constructor(
     private val downloadRepository: DownloadRepository
 ) : ViewModel() {
+
+    init {
+        viewModelScope.launch {
+            try {
+                downloadRepository.reconcileQueuedDownloads()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("DownloadViewModel", "Could not restore queued downloads", e)
+            }
+        }
+    }
 
     val activeDownloads: Flow<List<DownloadEntity>> = downloadRepository.activeDownloads
     val completedDownloads: Flow<List<DownloadEntity>> = downloadRepository.completedDownloads

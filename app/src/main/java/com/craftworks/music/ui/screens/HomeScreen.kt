@@ -8,6 +8,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,12 +16,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,10 +30,14 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -73,6 +79,7 @@ import androidx.navigation.compose.rememberNavController
 import com.craftworks.music.R
 import com.craftworks.music.data.GreetingMessages
 import com.craftworks.music.data.model.Screen
+import com.craftworks.music.data.repository.AudiobookBook
 import com.craftworks.music.managers.NavidromeManager
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.player.SongHelper
@@ -84,6 +91,8 @@ import com.craftworks.music.ui.util.LayoutMode
 import com.craftworks.music.ui.util.rememberFoldableState
 import com.craftworks.music.ui.util.responsiveAlbumCardWidth
 import com.craftworks.music.ui.viewmodels.HomeScreenViewModel
+import com.craftworks.music.ui.viewmodels.AudiobooksViewModel
+import com.craftworks.music.ui.viewmodels.DiscoveryMixState
 import com.craftworks.music.ui.viewmodels.SyncIndicatorViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -103,7 +112,8 @@ fun HomeScreen(
     navHostController: NavHostController = rememberNavController(),
     mediaController: MediaController? = null,
     viewModel: HomeScreenViewModel = hiltViewModel(),
-    syncViewModel: SyncIndicatorViewModel = hiltViewModel()
+    syncViewModel: SyncIndicatorViewModel = hiltViewModel(),
+    audiobooksViewModel: AudiobooksViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -113,6 +123,16 @@ fun HomeScreen(
     val recentAlbums by viewModel.recentAlbums.collectAsStateWithLifecycle()
     val mostPlayedAlbums by viewModel.mostPlayedAlbums.collectAsStateWithLifecycle()
     val shuffledAlbums by viewModel.shuffledAlbums.collectAsStateWithLifecycle()
+    val discoveryMixState by viewModel.discoveryMixState.collectAsStateWithLifecycle()
+    val audiobooks by audiobooksViewModel.books.collectAsStateWithLifecycle()
+
+    LaunchedEffect(discoveryMixState, mediaController) {
+        val ready = discoveryMixState as? DiscoveryMixState.Ready
+        if (ready != null && mediaController != null) {
+            SongHelper.play(ready.songs, 0, mediaController)
+            viewModel.consumeDiscoveryMix()
+        }
+    }
 
     val state = rememberPullToRefreshState()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
@@ -151,7 +171,9 @@ fun HomeScreen(
                     )
             ) {
                 Row (Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    val username by appearanceManager.usernameFlow.collectAsStateWithLifecycle("Username")
+                    val username by appearanceManager.usernameFlow.collectAsStateWithLifecycle(
+                        AppearanceSettingsManager.DEFAULT_USERNAME
+                    )
                     val showNavidromeLogo =
                         appearanceManager.showNavidromeLogoFlow.collectAsStateWithLifecycle(true).value && NavidromeManager.checkActiveServers()
 
@@ -193,8 +215,7 @@ fun HomeScreen(
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
                         modifier = Modifier
-                            .padding(start = 12.dp)
-                            .offset(x = if (showNavidromeLogo) (-36).dp else 0.dp),
+                            .padding(start = 12.dp),
                     )
                 }
                 val isSyncing by syncViewModel.isSyncing.collectAsStateWithLifecycle()
@@ -277,6 +298,21 @@ fun HomeScreen(
                 }
             }
 
+            DiscoveryMixCard(
+                state = discoveryMixState,
+                onBuildMix = viewModel::buildDiscoveryMix
+            )
+
+            AudiobooksHomeCard(
+                books = audiobooks,
+                onClick = {
+                    navHostController.navigate(Screen.Audiobooks.route) {
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+            )
+
 
             val orderedHomeItems = appearanceManager.homeItemsItemsFlow.collectAsStateWithLifecycle(
                 initialValue = listOf(
@@ -339,6 +375,146 @@ fun HomeScreen(
     )
 }
 
+@Composable
+private fun AudiobooksHomeCard(
+    books: List<AudiobookBook>,
+    onClick: () -> Unit
+) {
+    val continueBook = remember(books) {
+        books.filter { it.hasStarted && !it.isFinished }.maxByOrNull { it.updatedAt }
+    }
+    ElevatedCard(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = ImageVector.vectorResource(R.drawable.rounded_auto_stories_24),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(38.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.Audiobooks),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = continueBook?.let { book ->
+                        stringResource(
+                            R.string.Home_Audiobooks_Continue,
+                            book.album.mediaMetadata.title?.toString().orEmpty()
+                        )
+                    } ?: stringResource(R.string.Home_Audiobooks_Count, books.size),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (continueBook != null) {
+                    LinearProgressIndicator(
+                        progress = { continueBook.progressFraction },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiscoveryMixCard(
+    state: DiscoveryMixState,
+    onBuildMix: () -> Unit
+) {
+    val isLoading = state is DiscoveryMixState.Loading
+    val errorText = when (state) {
+        DiscoveryMixState.Empty -> stringResource(R.string.Home_Discovery_Empty)
+        DiscoveryMixState.Error -> stringResource(R.string.Home_Discovery_Error)
+        else -> null
+    }
+
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.Home_Discovery_Eyebrow),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.Home_Discovery_Title),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = stringResource(R.string.Home_Discovery_Description),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(
+                onClick = onBuildMix,
+                enabled = !isLoading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(R.drawable.rounded_queue_music_24),
+                        contentDescription = null
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = stringResource(
+                        if (isLoading) R.string.Home_Discovery_Building
+                        else R.string.Home_Discovery_Action
+                    )
+                )
+            }
+            if (errorText != null) {
+                Text(
+                    text = errorText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+
 @Composable fun NavidromeLogo(){
     var rotation by remember { mutableFloatStateOf(-10f) }
     val animatedRotation by animateFloatAsState(
@@ -363,8 +539,8 @@ fun HomeScreen(
         painter = painterResource(R.drawable.s_m_navidrome),
         contentDescription = "Navidrome Icon",
         modifier = Modifier
-            .size(76.dp)
-            .offset(x = (-36).dp)
+            .padding(start = 12.dp)
+            .size(64.dp)
             .shadow(24.dp, CircleShape)
             .graphicsLayer {
                 rotationZ = animatedRotation

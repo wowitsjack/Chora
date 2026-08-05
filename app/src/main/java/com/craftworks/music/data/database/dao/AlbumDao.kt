@@ -11,26 +11,32 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface AlbumDao {
-    @Query("SELECT * FROM albums ORDER BY name COLLATE NOCASE ASC")
+    @Query("SELECT * FROM albums WHERE mediaCategory = 'music' ORDER BY name COLLATE NOCASE ASC")
     fun getAllAlbums(): Flow<List<AlbumEntity>>
 
     @Query("SELECT * FROM albums ORDER BY name COLLATE NOCASE ASC")
     suspend fun getAllAlbumsOnce(): List<AlbumEntity>
 
-    @Query("SELECT * FROM albums WHERE artistId = :artistId ORDER BY year DESC")
+    @Query("SELECT * FROM albums WHERE artistId = :artistId AND mediaCategory = 'music' ORDER BY year DESC")
     fun getAlbumsByArtist(artistId: String): Flow<List<AlbumEntity>>
 
     @Query("SELECT * FROM albums WHERE navidromeID = :id")
     suspend fun getAlbumById(id: String): AlbumEntity?
 
-    @Query("SELECT * FROM albums ORDER BY created DESC LIMIT :limit")
+    @Query("SELECT * FROM albums WHERE mediaCategory = 'music' ORDER BY created DESC LIMIT :limit")
     fun getRecentlyAdded(limit: Int = 50): Flow<List<AlbumEntity>>
 
-    @Query("SELECT * FROM albums WHERE starred IS NOT NULL AND starred != '' ORDER BY name COLLATE NOCASE ASC")
+    @Query("SELECT * FROM albums WHERE mediaCategory = 'music' AND starred IS NOT NULL AND starred != '' ORDER BY name COLLATE NOCASE ASC")
     fun getStarredAlbums(): Flow<List<AlbumEntity>>
 
-    @Query("SELECT * FROM albums ORDER BY RANDOM() LIMIT :limit")
+    @Query("SELECT * FROM albums WHERE mediaCategory = 'music' ORDER BY RANDOM() LIMIT :limit")
     fun getRandomAlbums(limit: Int = 50): Flow<List<AlbumEntity>>
+
+    @Query("SELECT * FROM albums WHERE mediaCategory = 'audiobook' ORDER BY name COLLATE NOCASE ASC")
+    fun getAllAudiobooks(): Flow<List<AlbumEntity>>
+
+    @Query("SELECT * FROM albums WHERE mediaCategory = 'audiobook' ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAllAudiobooksOnce(): List<AlbumEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(albums: List<AlbumEntity>)
@@ -44,6 +50,9 @@ interface AlbumDao {
     @Query("DELETE FROM albums")
     suspend fun deleteAll()
 
+    @Query("DELETE FROM albums WHERE lastSyncedAt < :syncStartedAt")
+    suspend fun deleteNotSeenSince(syncStartedAt: Long): Int
+
     @Query("SELECT COUNT(*) FROM albums")
     suspend fun getCount(): Int
 
@@ -51,8 +60,11 @@ interface AlbumDao {
     fun getCountFlow(): Flow<Int>
 
     // Batch query for artist albums cache-first
-    @Query("SELECT * FROM albums WHERE artistId = :artistId ORDER BY year DESC")
+    @Query("SELECT * FROM albums WHERE artistId = :artistId AND mediaCategory = 'music' ORDER BY year DESC")
     suspend fun getAlbumsByArtistOnce(artistId: String): List<AlbumEntity>
+
+    @Query("SELECT * FROM albums WHERE artist = :artistName COLLATE NOCASE AND mediaCategory = 'music' ORDER BY year DESC")
+    suspend fun getAlbumsByArtistNameOnce(artistName: String): List<AlbumEntity>
 
     /**
      * Replaces all albums atomically.

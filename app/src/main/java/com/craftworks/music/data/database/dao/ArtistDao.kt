@@ -14,6 +14,14 @@ interface ArtistDao {
     // Sort unknown/blank artists to the end
     @Query("""
         SELECT * FROM artists
+        WHERE EXISTS (
+            SELECT 1 FROM albums
+            WHERE albums.mediaCategory = 'music'
+              AND (
+                albums.artistId = artists.navidromeID
+                OR albums.artist COLLATE NOCASE = artists.name COLLATE NOCASE
+              )
+        )
         ORDER BY
             CASE
                 WHEN name IS NULL OR name = '' OR LOWER(name) LIKE '%unknown%' THEN 1
@@ -25,6 +33,14 @@ interface ArtistDao {
 
     @Query("""
         SELECT * FROM artists
+        WHERE EXISTS (
+            SELECT 1 FROM albums
+            WHERE albums.mediaCategory = 'music'
+              AND (
+                albums.artistId = artists.navidromeID
+                OR albums.artist COLLATE NOCASE = artists.name COLLATE NOCASE
+              )
+        )
         ORDER BY
             CASE
                 WHEN name IS NULL OR name = '' OR LOWER(name) LIKE '%unknown%' THEN 1
@@ -37,7 +53,18 @@ interface ArtistDao {
     @Query("SELECT * FROM artists WHERE navidromeID = :id")
     suspend fun getArtistById(id: String): ArtistEntity?
 
-    @Query("SELECT * FROM artists WHERE starred IS NOT NULL AND starred != ''")
+    @Query("""
+        SELECT * FROM artists
+        WHERE starred IS NOT NULL AND starred != ''
+          AND EXISTS (
+            SELECT 1 FROM albums
+            WHERE albums.mediaCategory = 'music'
+              AND (
+                albums.artistId = artists.navidromeID
+                OR albums.artist COLLATE NOCASE = artists.name COLLATE NOCASE
+              )
+          )
+    """)
     fun getStarredArtists(): Flow<List<ArtistEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -51,6 +78,9 @@ interface ArtistDao {
 
     @Query("DELETE FROM artists")
     suspend fun deleteAll()
+
+    @Query("DELETE FROM artists WHERE lastSyncedAt < :syncStartedAt")
+    suspend fun deleteNotSeenSince(syncStartedAt: Long): Int
 
     @Query("SELECT COUNT(*) FROM artists")
     suspend fun getCount(): Int

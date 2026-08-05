@@ -70,6 +70,7 @@ import com.craftworks.music.R
 import com.craftworks.music.data.model.Screen
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.managers.settings.ArtworkSettingsManager
+import com.craftworks.music.managers.settings.InterfaceMode
 import com.craftworks.music.ui.elements.dialogs.BackgroundDialog
 import com.craftworks.music.ui.elements.dialogs.HomeItemsDialog
 import com.craftworks.music.ui.elements.dialogs.NameDialog
@@ -145,7 +146,9 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     modifier = Modifier.clip(RoundedCornerShape(16.dp))
                 ) {
                     //Username
-                    val username by appearanceSettingsManager.usernameFlow.collectAsStateWithLifecycle("Username")
+                    val username by appearanceSettingsManager.usernameFlow.collectAsStateWithLifecycle(
+                        AppearanceSettingsManager.DEFAULT_USERNAME
+                    )
 
                     SettingsDialogButton(
                         stringResource(R.string.Setting_Username),
@@ -181,6 +184,26 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         ImageVector.vectorResource(R.drawable.s_a_palette),
                         toggleEvent = {
                             showThemesDialog = true
+                        }
+                    )
+
+                    val interfaceMode by appearanceSettingsManager.interfaceModeFlow.collectAsStateWithLifecycle(
+                        InterfaceMode.CHORA
+                    )
+                    SettingsSwitch(
+                        selected = interfaceMode == InterfaceMode.IPOD_TOUCH,
+                        settingsName = stringResource(R.string.Setting_IpodTouchMode),
+                        settingsIcon = ImageVector.vectorResource(R.drawable.round_music_note_24),
+                        toggleEvent = {
+                            coroutineScope.launch {
+                                appearanceSettingsManager.setInterfaceMode(
+                                    if (interfaceMode == InterfaceMode.IPOD_TOUCH) {
+                                        InterfaceMode.CHORA
+                                    } else {
+                                        InterfaceMode.IPOD_TOUCH
+                                    }
+                                )
+                            }
                         }
                     )
 
@@ -227,25 +250,18 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     )
 
                     //Home Items
-                    val titleMap = remember {
-                        mapOf(
-                            "recently_played" to R.string.recently_played,
-                            "recently_added" to R.string.recently_added,
-                            "most_played" to R.string.most_played,
-                            "random_songs" to R.string.random_songs
-                        )
-                    }
+                    val titleMap = mapOf(
+                        "recently_played" to stringResource(R.string.recently_played),
+                        "recently_added" to stringResource(R.string.recently_added),
+                        "most_played" to stringResource(R.string.most_played),
+                        "random_songs" to stringResource(R.string.random_songs)
+                    )
                     val enabledHomeItems =
                         appearanceSettingsManager.homeItemsItemsFlow.collectAsStateWithLifecycle(
                             emptyList()
                         ).value
                             .filter { it.enabled }
-                            .joinToString(", ") {
-                                context.getString(
-                                    titleMap[it.key]
-                                        ?: androidx.media3.session.R.string.error_message_fallback
-                                )
-                            }
+                            .joinToString(", ") { titleMap[it.key] ?: it.key }
 
                     SettingsDialogButton(
                         stringResource(R.string.Setting_Home_Items),

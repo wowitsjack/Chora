@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.util.Log
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Environment
 import android.widget.Toast
 import androidx.annotation.OptIn
@@ -15,6 +16,7 @@ import androidx.media3.common.util.NotificationUtil.IMPORTANCE_LOW
 import androidx.media3.common.util.NotificationUtil.createNotificationChannel
 import androidx.media3.common.util.UnstableApi
 import com.craftworks.music.R
+import com.craftworks.music.data.requireUsableNavidromeServerUrl
 import com.craftworks.music.managers.NavidromeManager.getCurrentServer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,6 +37,7 @@ suspend fun downloadNavidromeSongs(
     }
 }
 
+@OptIn(UnstableApi::class)
 suspend fun downloadNavidromeSong(
     context: Context,
     song: MediaMetadata
@@ -68,6 +71,7 @@ suspend fun downloadNavidromeSong(
     notificationManager.notify(notificationId, notificationBuilder.build())
 
     val server = getCurrentServer() ?: throw IllegalArgumentException("Could not get current server.")
+    val serverUrl = requireUsableNavidromeServerUrl(server.url)
 
     withContext(Dispatchers.IO) {
         // ... (hashing logic same as before) ...
@@ -79,7 +83,7 @@ suspend fun downloadNavidromeSong(
         // DownloadWorker encoded them. Consistency would be good.
         // But Navidrome API expects them as is usually. Let's keep existing logic but just fix the File I/O.
 
-        val urlString = "${server.url}/rest/download.view?id=${song.extras?.getString("navidromeID")}&u=$encodedUsername&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora"
+        val urlString = "$serverUrl/rest/download.view?id=${song.extras?.getString("navidromeID")}&u=$encodedUsername&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora"
 
         // Log.d("NAVIDROME", "Downloading song: ${song.title}") // Don't log potentially PII if not needed, but title is fine.
 
@@ -125,7 +129,11 @@ suspend fun downloadNavidromeSong(
                 throw java.io.IOException("Server returned HTTP ${connection.responseCode}")
             }
 
-            val fileSize = connection.contentLengthLong
+            val fileSize = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                connection.contentLengthLong
+            } else {
+                connection.contentLength.toLong()
+            }
 
             connection.inputStream.use { inputStream ->
                 FileOutputStream(tempFile).use { fileOutputStream ->

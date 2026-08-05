@@ -2,7 +2,6 @@ package com.craftworks.music.ui.screens.onboarding
 
 import android.Manifest
 import android.os.Build
-import android.util.Patterns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -57,8 +56,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.craftworks.music.R
 import com.craftworks.music.managers.settings.OnboardingSettingsManager.ProviderType
-import com.craftworks.music.providers.navidrome.navidromeStatus
 import com.craftworks.music.ui.viewmodels.OnboardingViewModel
+import com.craftworks.music.ui.viewmodels.normalizeNavidromeUrl
 import kotlinx.coroutines.delay
 
 /**
@@ -500,6 +499,7 @@ private fun NavidromeSetupForm(
     val password by viewModel.navidromePassword.collectAsStateWithLifecycle()
     val allowSelfSignedCerts by viewModel.allowSelfSignedCerts.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
+    val connectionError = (connectionStatus as? OnboardingViewModel.ConnectionStatus.Error)?.message
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -510,14 +510,21 @@ private fun NavidromeSetupForm(
             onValueChange = { if (it.length <= 512) viewModel.updateNavidromeUrl(it) },
             label = { Text(stringResource(R.string.Label_Navidrome_URL)) },
             placeholder = { Text("server.com:4533 or https://server.com") },
-            supportingText = { Text("Port is optional (defaults to 80/443)") },
+            supportingText = {
+                Text(
+                    if (connectionError?.contains("URL", ignoreCase = true) == true) {
+                        connectionError
+                    } else {
+                        "Port is optional (defaults to 80/443)"
+                    }
+                )
+            },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            isError = (connectionStatus is OnboardingViewModel.ConnectionStatus.Error &&
-                    (connectionStatus as OnboardingViewModel.ConnectionStatus.Error).message.contains("URL", ignoreCase = true)) ||
-                    (url.isNotEmpty() && !Patterns.WEB_URL.matcher(url).matches())
+            isError = connectionError?.contains("URL", ignoreCase = true) == true ||
+                    (url.isNotEmpty() && normalizeNavidromeUrl(url) == null)
         )
 
         OutlinedTextField(
@@ -526,7 +533,13 @@ private fun NavidromeSetupForm(
             label = { Text(stringResource(R.string.Label_Navidrome_Username)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp),
+            isError = connectionError?.contains("username", ignoreCase = true) == true,
+            supportingText = if (connectionError?.contains("username", ignoreCase = true) == true) {
+                { Text(connectionError) }
+            } else {
+                null
+            }
         )
 
         OutlinedTextField(
@@ -536,6 +549,12 @@ private fun NavidromeSetupForm(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
+            isError = connectionError?.contains("password", ignoreCase = true) == true,
+            supportingText = if (connectionError?.contains("password", ignoreCase = true) == true) {
+                { Text(connectionError) }
+            } else {
+                null
+            },
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
                 IconButton(onClick = { passwordVisible = !passwordVisible }) {

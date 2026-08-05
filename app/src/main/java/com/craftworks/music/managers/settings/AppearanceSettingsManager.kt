@@ -8,6 +8,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.craftworks.music.R
 import com.craftworks.music.data.BottomNavItem
+import com.craftworks.music.data.defaultBottomNavItems
+import com.craftworks.music.data.normalizeBottomNavItems
 import com.craftworks.music.dataStore
 import com.craftworks.music.ui.playing.NowPlayingBackground
 import com.craftworks.music.ui.playing.NowPlayingTitleAlignment
@@ -19,11 +21,22 @@ import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
+enum class InterfaceMode {
+    CHORA,
+    IPOD_TOUCH;
+
+    companion object {
+        fun fromStorage(value: String?): InterfaceMode =
+            entries.firstOrNull { it.name == value } ?: CHORA
+    }
+}
+
 @Singleton
 class AppearanceSettingsManager @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) {
     companion object {
+        const val DEFAULT_USERNAME = "Listener"
         private val USERNAME_KEY = stringPreferencesKey("username")
         private val NP_BACKGROUND_KEY = stringPreferencesKey("np_background_type")
         private val NP_TITLE_ALIGNMENT = stringPreferencesKey("np_title_alignment")
@@ -33,6 +46,7 @@ class AppearanceSettingsManager @Inject constructor(
         private val BOTTOM_NAV_ITEMS_KEY = stringPreferencesKey("bottom_nav_order")
         private val HOME_ITEMS_KEY = stringPreferencesKey("home_items_order")
         private val APP_THEME = stringPreferencesKey("theme")
+        private val INTERFACE_MODE_KEY = stringPreferencesKey("interface_mode")
 
         enum class AppTheme {
             LIGHT, DARK, SYSTEM
@@ -48,7 +62,7 @@ class AppearanceSettingsManager @Inject constructor(
     }
 
     val usernameFlow: Flow<String> = context.dataStore.data.map { preferences ->
-        preferences[USERNAME_KEY] ?: "Username"
+        preferences[USERNAME_KEY] ?: DEFAULT_USERNAME
     }
 
     suspend fun setUsername(username: String) {
@@ -139,23 +153,12 @@ class AppearanceSettingsManager @Inject constructor(
     val bottomNavItemsFlow: Flow<List<BottomNavItem>> = context.dataStore.data.map { preferences ->
         val jsonString = preferences[BOTTOM_NAV_ITEMS_KEY]
         try {
-            jsonString?.let { Json.Default.decodeFromString<List<BottomNavItem>>(it) } ?: listOf(
-                BottomNavItem("Home", R.drawable.rounded_home_24, "home_screen"),
-                BottomNavItem("Albums", R.drawable.rounded_library_music_24, "album_screen"),
-                BottomNavItem("Songs", R.drawable.round_music_note_24, "songs_screen"),
-                BottomNavItem("Artists", R.drawable.rounded_artist_24, "artists_screen"),
-                BottomNavItem("Radios", R.drawable.rounded_radio, "radio_screen"),
-                BottomNavItem("Playlists", R.drawable.placeholder, "playlist_screen")
+            normalizeBottomNavItems(
+                jsonString?.let { Json.Default.decodeFromString<List<BottomNavItem>>(it) }
+                    ?: defaultBottomNavItems()
             )
         } catch (e: Exception) {
-            listOf(
-                BottomNavItem("Home", R.drawable.rounded_home_24, "home_screen"),
-                BottomNavItem("Albums", R.drawable.rounded_library_music_24, "album_screen"),
-                BottomNavItem("Songs", R.drawable.round_music_note_24, "songs_screen"),
-                BottomNavItem("Artists", R.drawable.rounded_artist_24, "artists_screen"),
-                BottomNavItem("Radios", R.drawable.rounded_radio, "radio_screen"),
-                BottomNavItem("Playlists", R.drawable.placeholder, "playlist_screen")
-            )
+            defaultBottomNavItems()
         }
     }
 
@@ -172,6 +175,16 @@ class AppearanceSettingsManager @Inject constructor(
     suspend fun setAppTheme(theme: AppTheme) {
         context.dataStore.edit { preferences ->
             preferences[APP_THEME] = theme.name
+        }
+    }
+
+    val interfaceModeFlow: Flow<InterfaceMode> = context.dataStore.data.map { preferences ->
+        InterfaceMode.fromStorage(preferences[INTERFACE_MODE_KEY])
+    }
+
+    suspend fun setInterfaceMode(mode: InterfaceMode) {
+        context.dataStore.edit { preferences ->
+            preferences[INTERFACE_MODE_KEY] = mode.name
         }
     }
 

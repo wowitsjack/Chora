@@ -56,6 +56,10 @@ sealed class MediaData {
         val media: String? = null,
         val trackIndex: Int? = 0,
         val starred: String? = null,
+        val musicFolderId: Int? = null,
+        val mediaCategory: String? = null,
+        val bookmarkPosition: Long = 0L,
+        val chapters: List<AudiobookChapter> = emptyList(),
     ) : MediaData()
 
     @Stable
@@ -85,6 +89,8 @@ sealed class MediaData {
         val genres : List<Genre>? = listOf(),
 
         val starred: String? = null,
+        val musicFolderId: Int? = null,
+        val mediaCategory: String? = null,
 
         @SerialName("song")
         val songs: List<Song>? = listOf()

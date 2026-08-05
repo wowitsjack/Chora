@@ -53,8 +53,6 @@ import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.craftworks.music.managers.settings.ArtworkSettingsManager
 
-import com.craftworks.music.ui.util.rememberAlbumPalette
-
 @OptIn(ExperimentalFoundationApi::class)
 @Stable
 @Composable
@@ -77,9 +75,10 @@ fun AlbumCard(
     val generatedArtworkEnabled by artworkSettings.generatedArtworkEnabledFlow.collectAsStateWithLifecycle(true)
     val fallbackMode by artworkSettings.fallbackModeFlow.collectAsStateWithLifecycle(ArtworkSettingsManager.FallbackMode.PLACEHOLDER_DETECT)
 
-    // Palette colors
     val artworkUri = album.mediaMetadata.artworkUri?.toString()
-    val paletteColors by rememberAlbumPalette(artworkUri)
+    // Generated list artwork is drawn directly from the media identity. Avoid
+    // downloading and decoding every visible cover just to derive two colors.
+    val paletteColors: List<Color>? = null
 
     // Selection animations
     val selectionScale by animateFloatAsState(
@@ -157,6 +156,7 @@ fun AlbumCard(
                 GeneratedAlbumArtStatic(
                     title = album.mediaMetadata.albumTitle?.toString() ?: "?",
                     artist = album.mediaMetadata.albumArtist?.toString(),
+                    album = album.mediaId,
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(RoundedCornerShape(8.dp)),
@@ -164,10 +164,10 @@ fun AlbumCard(
                 )
             } else if (hasArtwork) {
                 val cacheKey = (album.mediaMetadata.extras?.getString("source") ?: "default") + "_" +
-                    (album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId)
+                    (album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId) + "_art_1024"
                 SubcomposeAsyncImage(
                     model = ImageRequest.Builder(context)
-                        .data(album.mediaMetadata.artworkUri)
+                        .data(artworkDataAtSize(album.mediaMetadata.artworkUri, 1024))
                         .crossfade(true)
                         .diskCacheKey(cacheKey)
                         .memoryCacheKey(cacheKey)
@@ -183,6 +183,7 @@ fun AlbumCard(
                             GeneratedAlbumArtStatic(
                                 title = album.mediaMetadata.albumTitle?.toString() ?: "?",
                                 artist = album.mediaMetadata.albumArtist?.toString(),
+                                album = album.mediaId,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clip(RoundedCornerShape(8.dp)),

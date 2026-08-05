@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.elements
 
+import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -71,6 +72,7 @@ import com.craftworks.music.player.rememberManagedMediaController
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.ui.util.TextDisplayUtils
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -85,6 +87,7 @@ fun HorizontalSongCard(
     onEnterSelectionMode: (() -> Unit)? = null,
     onDownload: ((MediaItem) -> Unit)? = null,
     onAddToPlaylist: ((MediaItem) -> Unit)? = null,
+    onInstantMix: (suspend (MediaItem) -> List<MediaItem>)? = null,
     // Performance: Pass these from parent instead of creating per-item
     isOffline: Boolean = false,
     generatedArtworkEnabled: Boolean = true,
@@ -98,7 +101,10 @@ fun HorizontalSongCard(
 ) {
     val context = LocalContext.current
     val mediaController = rememberManagedMediaController().value
+    val instantMixBuildingMessage = stringResource(R.string.Instant_Mix_Building)
+    val instantMixErrorMessage = stringResource(R.string.Instant_Mix_Error)
     var expanded by remember { mutableStateOf(false) }
+    var instantMixLoading by remember(song.mediaId) { mutableStateOf(false) }
 
     // Check if generated artwork is needed
     val artworkUri = song.mediaMetadata.artworkUri?.toString()
@@ -231,71 +237,55 @@ fun HorizontalSongCard(
                 }
             }
             else {
-                // Use pre-computed needsGeneratedArt from above
-                if (needsGeneratedArt) {
-                    GeneratedAlbumArtStatic(
-                        title = song.mediaMetadata.title?.toString() ?: "?",
-                        artist = song.mediaMetadata.artist?.toString(),
-                        size = 64.dp,
-                        modifier = Modifier
-                            .padding(4.dp, 0.dp, 0.dp, 0.dp)
-                            .clip(RoundedCornerShape(12.dp)),
-                        colors = paletteColors,
-                        artworkStyle = artworkStyle,
-                        colorPalette = colorPalette,
-                        showInitialsOverride = showInitials
-                    )
-                } else if (hasArtwork) {
-                    val cacheKey = (song.mediaMetadata.extras?.getString("source") ?: "default") + "_" +
-                        (song.mediaMetadata.extras?.getString("navidromeID") ?: song.mediaId)
-                    SubcomposeAsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(song.mediaMetadata.artworkUri)
-                            .crossfade(true)
-                            .size(64)
-                            .diskCacheKey(cacheKey)
-                            .memoryCacheKey(cacheKey)
-                            .build(),
-                        contentDescription = "Album Image",
-                        contentScale = ContentScale.FillHeight,
-                        modifier = Modifier
-                            .size(64.dp)
-                            .padding(4.dp, 0.dp, 0.dp, 0.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        error = {
-                            if (generatedArtworkEnabled) {
-                                GeneratedAlbumArtStatic(
-                                    title = song.mediaMetadata.title?.toString() ?: "?",
-                                    artist = song.mediaMetadata.artist?.toString(),
-                                    size = 64.dp,
-                                    modifier = Modifier
-                                        .padding(4.dp, 0.dp, 0.dp, 0.dp)
-                                        .clip(RoundedCornerShape(12.dp)),
-                                    colors = paletteColors,
-                                    artworkStyle = artworkStyle,
-                                    colorPalette = colorPalette,
-                                    showInitialsOverride = showInitials
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(64.dp)
-                                        .padding(4.dp, 0.dp, 0.dp, 0.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    // Keep every cover in the same square slot. Padding outside a sized
+                    // image reduced its drawable width and made artwork look compressed.
+                    if (needsGeneratedArt) {
+                        GeneratedAlbumArtStatic(
+                            title = song.mediaMetadata.title?.toString() ?: "?",
+                            artist = song.mediaMetadata.artist?.toString(),
+                            size = 64.dp,
+                            modifier = Modifier.fillMaxSize(),
+                            colors = paletteColors,
+                            artworkStyle = artworkStyle,
+                            colorPalette = colorPalette,
+                            showInitialsOverride = showInitials
+                        )
+                    } else if (hasArtwork) {
+                        val cacheKey = (song.mediaMetadata.extras?.getString("source") ?: "default") + "_" +
+                            (song.mediaMetadata.extras?.getString("navidromeID") ?: song.mediaId)
+                        SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(song.mediaMetadata.artworkUri)
+                                .crossfade(true)
+                                .diskCacheKey(cacheKey)
+                                .memoryCacheKey(cacheKey)
+                                .build(),
+                            contentDescription = "Album Image",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                            error = {
+                                if (generatedArtworkEnabled) {
+                                    GeneratedAlbumArtStatic(
+                                        title = song.mediaMetadata.title?.toString() ?: "?",
+                                        artist = song.mediaMetadata.artist?.toString(),
+                                        size = 64.dp,
+                                        modifier = Modifier.fillMaxSize(),
+                                        colors = paletteColors,
+                                        artworkStyle = artworkStyle,
+                                        colorPalette = colorPalette,
+                                        showInitialsOverride = showInitials
+                                    )
+                                }
                             }
-                        }
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .padding(4.dp, 0.dp, 0.dp, 0.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                    )
+                        )
+                    }
                 }
             }
 
@@ -413,35 +403,11 @@ fun HorizontalSongCard(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.Action_Add_To_Queue)) },
+                        text = { Text(stringResource(R.string.Action_Add_To_Queue_Top)) },
                         onClick = {
                             coroutineScope.launch {
                                 try {
-                                    val addToBottom = PlaybackSettingsManager(context).queueAddToBottomFlow.first()
-                                    SongHelper.addToQueue(
-                                        song,
-                                        mediaController,
-                                        addToBottom
-                                    )
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
-                            }
-                            expanded = false
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = ImageVector.vectorResource(R.drawable.rounded_queue_music_24),
-                                contentDescription = "Add To Queue Icon"
-                            )
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.Action_Play_Next)) },
-                        onClick = {
-                            coroutineScope.launch {
-                                try {
-                                    SongHelper.playNext(song, mediaController)
+                                    SongHelper.addToQueueTop(song, mediaController)
                                 } catch (e: Exception) {
                                     e.printStackTrace()
                                 }
@@ -451,7 +417,69 @@ fun HorizontalSongCard(
                         leadingIcon = {
                             Icon(
                                 imageVector = ImageVector.vectorResource(R.drawable.rounded_playlist_play_24),
-                                contentDescription = "Play Next Icon"
+                                contentDescription = null
+                            )
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.Action_Add_To_Queue_Bottom)) },
+                        onClick = {
+                            coroutineScope.launch {
+                                try {
+                                    SongHelper.addToQueueBottom(song, mediaController)
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+                            expanded = false
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = ImageVector.vectorResource(R.drawable.rounded_queue_music_24),
+                                contentDescription = null
+                            )
+                        }
+                    )
+                    DropdownMenuItem(
+                        enabled = isNavidromeSong && onInstantMix != null && !instantMixLoading,
+                        text = { Text(stringResource(R.string.Action_Instant_Mix)) },
+                        onClick = {
+                            expanded = false
+                            val buildInstantMix = onInstantMix ?: return@DropdownMenuItem
+                            coroutineScope.launch {
+                                instantMixLoading = true
+                                Toast.makeText(
+                                    context,
+                                    instantMixBuildingMessage,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                try {
+                                    val mix = buildInstantMix(song)
+                                    if (mix.isNotEmpty()) {
+                                        SongHelper.play(mix, 0, mediaController)
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            instantMixErrorMessage,
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    Toast.makeText(
+                                        context,
+                                        instantMixErrorMessage,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                } finally {
+                                    instantMixLoading = false
+                                }
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = ImageVector.vectorResource(R.drawable.rounded_shuffle_24),
+                                contentDescription = null
                             )
                         }
                     )

@@ -7,6 +7,8 @@ sealed class Screen(val route: String) {
 
     data object Song : Screen("songs_screen")
     data object Radio : Screen("radio_screen")
+    data object Audiobooks : Screen("audiobooks_screen")
+    data object AudiobookDetails : Screen("audiobook_details")
 
     data object NowPlayingLandscape : Screen("playing_tv_screen")
     data object Queue : Screen("queue_screen")

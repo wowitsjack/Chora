@@ -116,8 +116,7 @@ fun DownloadQueueModal(
                     Text(
                         text = when {
                             active.isNotEmpty() -> {
-                                val downloading = active.count { it.status == DownloadStatus.DOWNLOADING }
-                                "Downloading $downloading of ${active.size}"
+                                activeDownloadSummary(active)
                             }
                             completed.isNotEmpty() -> "${completed.size} downloaded"
                             else -> "No downloads"
@@ -351,19 +350,32 @@ fun DownloadItemCard(
                 }
                 DownloadStatus.DOWNLOADING -> {
                     Column {
-                        LinearProgressIndicator(
-                            progress = { download.progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp)
-                                .height(4.dp)
-                                .clip(RoundedCornerShape(2.dp)),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.primaryContainer,
-                            strokeCap = StrokeCap.Round
-                        )
+                        if (isDownloadProgressDeterminate(download)) {
+                            LinearProgressIndicator(
+                                progress = { download.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.primaryContainer,
+                                strokeCap = StrokeCap.Round
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.primaryContainer,
+                                strokeCap = StrokeCap.Round
+                            )
+                        }
                         Text(
-                            text = "${(download.progress * 100).toInt()}%",
+                            text = downloadProgressText(download),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )

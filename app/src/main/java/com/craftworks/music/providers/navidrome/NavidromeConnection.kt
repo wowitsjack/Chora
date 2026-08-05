@@ -2,7 +2,10 @@ package com.craftworks.music.providers.navidrome
 
 import android.annotation.SuppressLint
 import android.util.Log
+import com.craftworks.music.data.navidromeServerUrlConnectionProblem
+import com.craftworks.music.data.normalizeNavidromeServerUrl
 import com.craftworks.music.data.model.MediaData
+import com.craftworks.music.data.model.NavidromeBookmark
 import com.craftworks.music.managers.NavidromeManager.getCurrentServer
 import com.craftworks.music.managers.NavidromeManager.setSyncingStatus
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +49,7 @@ data class SubsonicResponse(
     // Songs
     val song: MediaData.Song? = null,
     val searchResult3: SearchResult3? = null,
+    val bookmarks: BookmarkContainer? = null,
 
     // Albums
     val albumList: albumList? = null,
@@ -72,6 +76,14 @@ data class SubsonicResponse(
 
     // Random Songs
     val randomSongs: RandomSongs? = null,
+
+    // Similar Songs
+    val similarSongs2: RandomSongs? = null,
+)
+
+@Serializable
+data class BookmarkContainer(
+    val bookmark: List<NavidromeBookmark> = emptyList()
 )
 
 @Serializable
@@ -94,24 +106,29 @@ suspend fun sendNavidromeGETRequest(
     val parsedData = mutableListOf<Any>()
     val server = getCurrentServer() ?: throw IllegalArgumentException("Could not get current server.")
 
-    setSyncingStatus(true)
-
     withContext(Dispatchers.IO) {
+        val serverUrl = normalizeNavidromeServerUrl(server.url)
+        if (serverUrl == null) {
+            navidromeStatus.value = "Invalid URL"
+            return@withContext
+        }
+
+        val connectionProblem = navidromeServerUrlConnectionProblem(serverUrl)
+        if (connectionProblem != null) {
+            navidromeStatus.value = connectionProblem
+            Log.w("NAVIDROME", "$connectionProblem for endpoint: $endpoint")
+            return@withContext
+        }
+
         // Generate a random password salt and MD5 hash.
         // This is kinda slow, but needed.
         val passwordSalt = generateSalt(8)
         val passwordHash = md5Hash(server.password + passwordSalt)
 
-        // Return if link isn't valid (just checking if HTTP is specified)
-        if (!server.url.startsWith("http")){
-            navidromeStatus.value = "Invalid URL"
-            return@withContext
-        }
-
         // All get requests come from this file. Use Subsonic link template.
         // URL-encode username to prevent URL injection attacks
         val encodedUsername = URLEncoder.encode(server.username, "UTF-8")
-        val url = URL("${server.url}/rest/$endpoint&u=$encodedUsername&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora")
+        val url = URL("$serverUrl/rest/$endpoint&u=$encodedUsername&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora")
 
         val connection = if (url.protocol == "https") {
             (url.openConnection() as HttpsURLConnection).apply {
@@ -120,7 +137,7 @@ suspend fun sendNavidromeGETRequest(
                     // This bypasses SSL/TLS certificate verification.
                     // User has explicitly opted into this for servers with self-signed certs.
                     // This is ONLY intended for trusted home servers, NOT public networks.
-                    Log.w("NAVIDROME", "⚠️ SECURITY: Using self-signed cert mode for ${server.url}. " +
+                    Log.w("NAVIDROME", "Self-signed cert mode enabled for $serverUrl. " +
                             "SSL/TLS verification is bypassed. Only use on trusted networks!")
 
                     val trustAllCerts = arrayOf<TrustManager>(
@@ -169,6 +186,7 @@ suspend fun sendNavidromeGETRequest(
             url.openConnection() as HttpURLConnection
         }
 
+        setSyncingStatus(true)
         try {
             with(connection) {
                 connectTimeout = 15_000
@@ -189,21 +207,21 @@ suspend fun sendNavidromeGETRequest(
                     val responseContent = it.readText()
                     when {
                         endpoint.startsWith("ping")         -> parsedData.addAll(parseNavidromeStatus(responseContent))
-                        endpoint.startsWith("search3")      -> parsedData.addAll(parseNavidromeSearch3JSON(responseContent, server.url, server.username, server.password))
+                        endpoint.startsWith("search3")      -> parsedData.addAll(parseNavidromeSearch3JSON(responseContent, serverUrl, server.username, server.password))
 
                         // Albums
-                        endpoint.startsWith("getAlbumList") -> parsedData.addAll(parseNavidromeAlbumListJSON(responseContent, server.url, server.username, server.password))
-                        endpoint.startsWith("getAlbum.")    -> parsedData.addAll(parseNavidromeAlbumJSON(responseContent, server.url, server.username, server.password))
+                        endpoint.startsWith("getAlbumList") -> parsedData.addAll(parseNavidromeAlbumListJSON(responseContent, serverUrl, server.username, server.password))
+                        endpoint.startsWith("getAlbum.")    -> parsedData.addAll(parseNavidromeAlbumJSON(responseContent, serverUrl, server.username, server.password))
 
 
                         // Artists
                         endpoint.startsWith("getArtists")   -> parsedData.addAll(parseNavidromeArtistsJSON(responseContent))
-                        endpoint.startsWith("getArtist.")   -> parsedData.addAll(parseNavidromeArtistAlbumsJSON(responseContent, server.url, server.username, server.password))
+                        endpoint.startsWith("getArtist.")   -> parsedData.addAll(parseNavidromeArtistAlbumsJSON(responseContent, serverUrl, server.username, server.password))
                         endpoint.startsWith("getArtistInfo")-> parsedData.addAll(listOf(parseNavidromeArtistBiographyJSON(responseContent)))
 
                         // Playlists
-                        endpoint.startsWith("getPlaylists") -> parsedData.addAll(parseNavidromePlaylistsJSON(responseContent, server.url, server.username, server.password))
-                        endpoint.startsWith("getPlaylist.") -> parsedData.addAll(parseNavidromePlaylistJSON(responseContent, server.url, server.username, server.password))
+                        endpoint.startsWith("getPlaylists") -> parsedData.addAll(parseNavidromePlaylistsJSON(responseContent, serverUrl, server.username, server.password))
+                        endpoint.startsWith("getPlaylist.") -> parsedData.addAll(parseNavidromePlaylistJSON(responseContent, serverUrl, server.username, server.password))
                         endpoint.startsWith("updatePlaylist") -> { NavidromeCache.delByPrefix("getPlaylist") }
                         endpoint.startsWith("createPlaylist") -> { NavidromeCache.delByPrefix("getPlaylist") }
                         endpoint.startsWith("deletePlaylist") -> { NavidromeCache.delByPrefix("getPlaylist") }
@@ -226,7 +244,7 @@ suspend fun sendNavidromeGETRequest(
                         }
 
                         // Favourites
-                        endpoint.startsWith("getStarred") -> { parsedData.addAll(parseNavidromeFavouritesJSON(responseContent, server.url, server.username, server.password)) }
+                        endpoint.startsWith("getStarred") -> { parsedData.addAll(parseNavidromeFavouritesJSON(responseContent, serverUrl, server.username, server.password)) }
 
                         else -> { setSyncingStatus(false) }
                     }
@@ -235,7 +253,7 @@ suspend fun sendNavidromeGETRequest(
             }
         } // Peak coding right here, try catch EVERYTHING.
         catch (e: ConnectException) {
-            navidromeStatus.value = "Network Unreachable"
+            navidromeStatus.value = "Connection refused"
             Log.d("NAVIDROME", "Exception: $e")
         } catch (e: SocketTimeoutException) {
             navidromeStatus.value = "Timed out"
@@ -244,7 +262,7 @@ suspend fun sendNavidromeGETRequest(
             navidromeStatus.value = "Host Unreachable"
             Log.d("NAVIDROME", "Exception: $e")
         } catch (e: UnknownHostException) {
-            navidromeStatus.value = "Unknown Host"
+            navidromeStatus.value = "Server not found"
             Log.d("NAVIDROME", "Exception: $e")
         } catch (e: ProtocolException) {
             navidromeStatus.value = "Invalid URL"
@@ -266,7 +284,9 @@ suspend fun sendNavidromeGETRequest(
     }
 
     // Add data to cache and return it
-    NavidromeCache.put(endpoint, parsedData)
+    if (parsedData.isNotEmpty()) {
+        NavidromeCache.put(endpoint, parsedData)
+    }
     return parsedData
 }
 

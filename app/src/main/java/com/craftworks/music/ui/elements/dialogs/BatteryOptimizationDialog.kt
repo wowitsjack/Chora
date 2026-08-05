@@ -41,8 +41,15 @@ fun BatteryOptimizationDialog(
 ) {
     val batteryManager = BatteryOptimizationManager(context)
     val coroutineScope = rememberCoroutineScope()
+    val dismissPrompt: (() -> Unit) -> Unit = { afterDismiss ->
+        coroutineScope.launch {
+            batteryManager.dismissPrompt()
+            afterDismiss()
+            setShowDialog(false)
+        }
+    }
 
-    Dialog(onDismissRequest = { setShowDialog(false) }) {
+    Dialog(onDismissRequest = { dismissPrompt {} }) {
         Column(
             modifier = Modifier
                 .widthIn(min = 280.dp, max = 560.dp)
@@ -80,21 +87,13 @@ fun BatteryOptimizationDialog(
                 horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
             ) {
                 OutlinedButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            batteryManager.dismissPrompt()
-                        }
-                        setShowDialog(false)
-                    }
+                    onClick = { dismissPrompt {} }
                 ) {
                     Text("Not Now")
                 }
 
                 Button(
-                    onClick = {
-                        onRequestDisable()
-                        setShowDialog(false)
-                    }
+                    onClick = { dismissPrompt(onRequestDisable) }
                 ) {
                     Text("Disable")
                 }

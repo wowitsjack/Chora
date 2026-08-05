@@ -78,6 +78,7 @@ import com.craftworks.music.ui.elements.SwipeableToQueueSongCard
 import com.craftworks.music.ui.elements.dialogs.dialogFocusable
 import com.craftworks.music.ui.viewmodels.DownloadViewModel
 import com.craftworks.music.ui.viewmodels.PlaylistScreenViewModel
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -88,7 +89,8 @@ fun PlaylistDetails(
     navHostController: NavHostController = rememberNavController(),
     mediaController: MediaController? = rememberManagedMediaController().value,
     viewModel: PlaylistScreenViewModel = hiltViewModel(),
-    downloadViewModel: DownloadViewModel = hiltViewModel()
+    downloadViewModel: DownloadViewModel = hiltViewModel(),
+    songActionsViewModel: SongActionsViewModel = hiltViewModel()
 ) {
     val imageFadingEdge = Brush.verticalGradient(listOf(Color.Red, Color.Transparent))
 
@@ -181,10 +183,10 @@ fun PlaylistDetails(
                                     ?: playlistMetadata?.title.toString()
                             )
                             .build(),
-                        contentScale = ContentScale.FillWidth,
+                        contentScale = ContentScale.Crop,
                         contentDescription = "Playlist cover art",
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .fillMaxSize()
                             .fadingEdge(imageFadingEdge)
                             .clip(RoundedCornerShape(12.dp, 12.dp, 0.dp, 0.dp))
                             .blur(8.dp)
@@ -323,6 +325,7 @@ fun PlaylistDetails(
                 HorizontalSongCard(
                     song = song,
                     modifier = Modifier.animateItem(),
+                    onInstantMix = songActionsViewModel::buildInstantMix,
                     onClick = {
                         if (isInSelectionMode) {
                             if (selectedSongIds.contains(songId)) {
@@ -335,14 +338,7 @@ fun PlaylistDetails(
                             }
                         } else {
                             coroutineScope.launch {
-                                val index = playlistSongs.indexOf(song)
-                                if (index != -1) {
-                                    SongHelper.play(
-                                        playlistSongs,
-                                        index,
-                                        mediaController
-                                    )
-                                }
+                                SongHelper.playNow(song, mediaController)
                             }
                         }
                     },

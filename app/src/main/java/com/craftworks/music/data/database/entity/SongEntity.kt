@@ -3,9 +3,12 @@ package com.craftworks.music.data.database.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 import com.craftworks.music.data.model.Artists
+import com.craftworks.music.data.model.AudiobookChapter
 import com.craftworks.music.data.model.Genre
 import com.craftworks.music.data.model.MediaData
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.data.model.ReplayGain
 
 @Entity(
@@ -18,7 +21,9 @@ import com.craftworks.music.data.model.ReplayGain
         Index(value = ["dateAdded"]),
         Index(value = ["timesPlayed"]),
         Index(value = ["title"]),
-        Index(value = ["discNumber", "track"])
+        Index(value = ["discNumber", "track"]),
+        Index(value = ["mediaCategory"]),
+        Index(value = ["musicFolderId"])
     ]
 )
 data class SongEntity(
@@ -52,6 +57,13 @@ data class SongEntity(
     val samplingRate: Int?,
     val media: String?,
     val starred: String?,
+    val musicFolderId: Int? = null,
+    @ColumnInfo(defaultValue = "'music'")
+    val mediaCategory: String = MediaCategory.MUSIC,
+    @ColumnInfo(defaultValue = "0")
+    val bookmarkPosition: Long = 0L,
+    @ColumnInfo(defaultValue = "'[]'")
+    val chaptersJson: String = "[]",
     val lastSyncedAt: Long = System.currentTimeMillis()
 )
 
@@ -66,6 +78,12 @@ fun SongEntity.toMediaDataSong(): MediaData.Song {
         genresJson?.let { kotlinx.serialization.json.Json.decodeFromString<List<Genre>>(it) }
     } catch (e: Exception) {
         null
+    }
+
+    val chapters = try {
+        kotlinx.serialization.json.Json.decodeFromString<List<AudiobookChapter>>(chaptersJson)
+    } catch (_: Exception) {
+        emptyList()
     }
 
     return MediaData.Song(
@@ -97,7 +115,11 @@ fun SongEntity.toMediaDataSong(): MediaData.Song {
         channelCount = channelCount,
         samplingRate = samplingRate,
         media = media,
-        starred = starred
+        starred = starred,
+        musicFolderId = musicFolderId,
+        mediaCategory = mediaCategory,
+        bookmarkPosition = bookmarkPosition,
+        chapters = chapters
     )
 }
 
@@ -112,6 +134,12 @@ fun MediaData.Song.toEntity(): SongEntity {
         genres?.let { kotlinx.serialization.json.Json.encodeToString(kotlinx.serialization.builtins.ListSerializer(Genre.serializer()), it) }
     } catch (e: Exception) {
         null
+    }
+
+    val chaptersJson = try {
+        kotlinx.serialization.json.Json.encodeToString(chapters)
+    } catch (_: Exception) {
+        "[]"
     }
 
     return SongEntity(
@@ -143,6 +171,14 @@ fun MediaData.Song.toEntity(): SongEntity {
         channelCount = channelCount,
         samplingRate = samplingRate,
         media = media,
-        starred = starred
+        starred = starred,
+        musicFolderId = musicFolderId,
+        mediaCategory = MediaCategory.resolve(
+            explicit = mediaCategory,
+            path = path,
+            format = format
+        ),
+        bookmarkPosition = bookmarkPosition.coerceAtLeast(0L),
+        chaptersJson = chaptersJson
     )
 }

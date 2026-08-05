@@ -63,7 +63,6 @@ fun S_ArtworkScreen(navHostController: NavHostController = rememberNavController
     val fallbackMode by settingsManager.fallbackModeFlow.collectAsStateWithLifecycle(ArtworkSettingsManager.FallbackMode.PLACEHOLDER_DETECT)
     val style by settingsManager.artworkStyleFlow.collectAsStateWithLifecycle(ArtworkSettingsManager.ArtworkStyle.GRADIENT)
     val palette by settingsManager.colorPaletteFlow.collectAsStateWithLifecycle(ArtworkSettingsManager.ColorPalette.MATERIAL_YOU)
-    val showInitials by settingsManager.showInitialsFlow.collectAsStateWithLifecycle(true)
     val animate by settingsManager.animateArtworkFlow.collectAsStateWithLifecycle(false)
 
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -197,17 +196,8 @@ fun S_ArtworkScreen(navHostController: NavHostController = rememberNavController
                 )
 
                 SettingsToggleItem(
-                    title = "Show Initials",
-                    description = "Display album/artist initials on generated artwork",
-                    checked = showInitials,
-                    onCheckedChange = {
-                        coroutineScope.launch { settingsManager.setShowInitials(it) }
-                    }
-                )
-
-                SettingsToggleItem(
                     title = "Animate Artwork",
-                    description = "Enable shimmer animation on Now Playing screen",
+                    description = "Gently shift shapes on the Now Playing screen",
                     checked = animate,
                     onCheckedChange = {
                         coroutineScope.launch { settingsManager.setAnimateArtwork(it) }
@@ -305,10 +295,10 @@ private fun StyleSelector(
     onStyleSelected: (ArtworkSettingsManager.ArtworkStyle) -> Unit
 ) {
     val styles = listOf(
-        ArtworkSettingsManager.ArtworkStyle.GRADIENT to "Gradient",
-        ArtworkSettingsManager.ArtworkStyle.SOLID to "Solid",
-        ArtworkSettingsManager.ArtworkStyle.PATTERN to "Pattern",
-        ArtworkSettingsManager.ArtworkStyle.WAVEFORM to "Waveform",
+        ArtworkSettingsManager.ArtworkStyle.GRADIENT to "Soft",
+        ArtworkSettingsManager.ArtworkStyle.SOLID to "Bold",
+        ArtworkSettingsManager.ArtworkStyle.PATTERN to "Layered",
+        ArtworkSettingsManager.ArtworkStyle.WAVEFORM to "Cutout",
         ArtworkSettingsManager.ArtworkStyle.MINIMAL to "Minimal"
     )
 

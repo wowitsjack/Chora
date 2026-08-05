@@ -28,6 +28,37 @@ fun parseNavidromeRandomSongsJSON(
     navidromeUsername: String,
     navidromePassword: String
 ): List<MediaItem> {
+    return parseNavidromeSongCollectionJSON(
+        response = response,
+        navidromeUrl = navidromeUrl,
+        navidromeUsername = navidromeUsername,
+        navidromePassword = navidromePassword
+    ) { it.randomSongs?.song }
+}
+
+@OptIn(UnstableApi::class)
+fun parseNavidromeSimilarSongsJSON(
+    response: String,
+    navidromeUrl: String,
+    navidromeUsername: String,
+    navidromePassword: String
+): List<MediaItem> {
+    return parseNavidromeSongCollectionJSON(
+        response = response,
+        navidromeUrl = navidromeUrl,
+        navidromeUsername = navidromeUsername,
+        navidromePassword = navidromePassword
+    ) { it.similarSongs2?.song }
+}
+
+@OptIn(UnstableApi::class)
+private fun parseNavidromeSongCollectionJSON(
+    response: String,
+    navidromeUrl: String,
+    navidromeUsername: String,
+    navidromePassword: String,
+    songs: (SubsonicResponse) -> List<MediaData.Song>?
+): List<MediaItem> {
     val jsonParser = Json { ignoreUnknownKeys = true }
     val jsonElement = jsonParser.parseToJsonElement(response).jsonObject["subsonic-response"]
         ?: return emptyList()
@@ -41,7 +72,7 @@ fun parseNavidromeRandomSongsJSON(
     val passwordHashMedia = md5Hash(navidromePassword + passwordSaltMedia)
     val encodedUsername = URLEncoder.encode(navidromeUsername, "UTF-8")
 
-    return subsonicResponse.randomSongs?.song?.map {
+    return songs(subsonicResponse)?.map {
         it.copy(
             media = "$navidromeUrl/rest/stream.view?&id=${it.navidromeID}&u=$encodedUsername&t=$passwordHashMedia&s=$passwordSaltMedia&v=1.12.0&c=Chora",
             imageUrl = "$navidromeUrl/rest/getCoverArt.view?&id=${it.navidromeID}&u=$encodedUsername&t=$passwordHashMedia&s=$passwordSaltMedia&v=1.16.1&c=Chora&size=128"

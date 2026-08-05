@@ -23,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +54,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,9 +74,12 @@ import androidx.media3.ui.compose.state.rememberShuffleButtonState
 import com.craftworks.music.R
 import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.formatMilliseconds
+import com.craftworks.music.managers.SleepTimerManager
+import com.craftworks.music.player.AudiobookPlaybackHelper
 import com.craftworks.music.providers.navidrome.downloadNavidromeSong
 import com.craftworks.music.providers.navidrome.setNavidromeStar
 import com.craftworks.music.ui.elements.bounceClick
+import com.craftworks.music.ui.elements.dialogs.SleepTimerDialog
 import com.craftworks.music.ui.elements.moveClick
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -283,6 +289,163 @@ internal fun NextSongButton(player: Player, color: Color, modifier: Modifier = M
 }
 
 @Composable
+internal fun AudiobookTransportControls(
+    controller: MediaController,
+    color: Color,
+    playButtonSize: Dp = 92.dp,
+    chapterButtonSize: Dp = 48.dp,
+    seekButtonSize: Dp = 42.dp
+) {
+    TimedSeekButton(
+        label = "−15",
+        contentDescription = "Back 15 seconds",
+        color = color,
+        modifier = Modifier.size(seekButtonSize),
+        onClick = { AudiobookPlaybackHelper.seekBack(controller) }
+    )
+    IconButton(
+        onClick = { AudiobookPlaybackHelper.previousChapter(controller) },
+        modifier = Modifier.size(chapterButtonSize)
+    ) {
+        Icon(
+            imageVector = ImageVector.vectorResource(R.drawable.media3_notification_seek_to_previous),
+            contentDescription = "Previous chapter",
+            tint = color,
+            modifier = Modifier.size(chapterButtonSize)
+        )
+    }
+    PlayPauseButton(controller, color, Modifier.size(playButtonSize))
+    IconButton(
+        onClick = { AudiobookPlaybackHelper.nextChapter(controller) },
+        modifier = Modifier.size(chapterButtonSize)
+    ) {
+        Icon(
+            imageVector = ImageVector.vectorResource(R.drawable.media3_notification_seek_to_next),
+            contentDescription = "Next chapter",
+            tint = color,
+            modifier = Modifier.size(chapterButtonSize)
+        )
+    }
+    TimedSeekButton(
+        label = "+30",
+        contentDescription = "Forward 30 seconds",
+        color = color,
+        modifier = Modifier.size(seekButtonSize),
+        onClick = { AudiobookPlaybackHelper.seekForward(controller) }
+    )
+}
+
+@Composable
+private fun TimedSeekButton(
+    label: String,
+    contentDescription: String,
+    color: Color,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    IconButton(onClick = onClick, modifier = modifier) {
+        Text(
+            text = label,
+            color = color,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+internal fun AudiobookSecondaryControls(
+    controller: MediaController,
+    color: Color,
+    metadata: MediaMetadata?,
+    buttonSize: Dp = 48.dp
+) {
+    val speeds = remember { listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f) }
+    var currentSpeed by remember(controller) { mutableStateOf(controller.playbackParameters.speed) }
+    var speedMenuOpen by remember { mutableStateOf(false) }
+    var sleepDialogOpen by remember { mutableStateOf(false) }
+
+    DisposableEffect(controller) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+                currentSpeed = playbackParameters.speed
+            }
+        }
+        controller.addListener(listener)
+        currentSpeed = controller.playbackParameters.speed
+        onDispose { controller.removeListener(listener) }
+    }
+
+    Box {
+        Button(
+            onClick = { speedMenuOpen = true },
+            modifier = Modifier.size(buttonSize + 6.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(2.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Transparent,
+                contentColor = color.copy(alpha = 0.72f)
+            )
+        ) {
+            Text(
+                text = formatPlaybackSpeed(currentSpeed),
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+        DropdownMenu(
+            expanded = speedMenuOpen,
+            onDismissRequest = { speedMenuOpen = false }
+        ) {
+            speeds.forEach { speed ->
+                DropdownMenuItem(
+                    text = { Text(formatPlaybackSpeed(speed)) },
+                    onClick = {
+                        controller.setPlaybackSpeed(speed)
+                        speedMenuOpen = false
+                    }
+                )
+            }
+        }
+    }
+
+    Button(
+        onClick = { sleepDialogOpen = true },
+        modifier = Modifier.height(buttonSize + 6.dp),
+        shape = RoundedCornerShape(12.dp),
+        contentPadding = PaddingValues(6.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            contentColor = color.copy(alpha = 0.72f)
+        )
+    ) {
+        Icon(
+            imageVector = ImageVector.vectorResource(R.drawable.s_p_sleep_timer),
+            contentDescription = "Sleep timer",
+            modifier = Modifier.size(buttonSize)
+        )
+    }
+
+    DownloadButton(
+        color = color,
+        size = buttonSize,
+        metadata = metadata,
+        enabled = metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false
+    )
+    PlayQueueButton(color, buttonSize)
+
+    if (sleepDialogOpen) {
+        SleepTimerDialog(
+            setShowDialog = { sleepDialogOpen = it },
+            onDurationSelected = SleepTimerManager::startTimer
+        )
+    }
+}
+
+private fun formatPlaybackSpeed(speed: Float): String =
+    if (speed.toInt().toFloat() == speed) "${speed.toInt()}×" else "${speed}×"
+
+@Composable
 @Preview
 fun LyricsButton(
     color: Color = Color.Black,
@@ -349,7 +512,7 @@ fun PlayQueueButton(
     ) {
         Icon(
             imageVector = ImageVector.vectorResource(R.drawable.s_m_playback),
-            contentDescription = "Close Lyrics",
+            contentDescription = stringResource(R.string.Queue_Title),
             modifier = Modifier
                 .height(size)
                 .size(size)

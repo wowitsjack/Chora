@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.media3.common.MediaMetadata
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
@@ -17,9 +16,15 @@ import com.craftworks.music.worker.DownloadWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
+
+internal fun downloadConstraints(): Constraints = Constraints.Builder()
+    .setRequiresStorageNotLow(true)
+    .build()
 
 @Singleton
 class DownloadRepository @Inject constructor(
@@ -28,6 +33,7 @@ class DownloadRepository @Inject constructor(
     private val offlineSongDao: OfflineSongDao
 ) {
     private val workManager = WorkManager.getInstance(context)
+    private val hasReconciledQueuedDownloads = AtomicBoolean(false)
 
     // Flows for UI observation
     val allDownloads: Flow<List<DownloadEntity>> = downloadDao.getAllDownloads()
@@ -42,9 +48,12 @@ class DownloadRepository @Inject constructor(
         val mediaId = song.extras?.getString("navidromeID") ?: return ""
         val format = song.extras?.getString("format") ?: "mp3"
 
-        // Check if already offline - file exists and is available
-        if (offlineSongDao.isOfflineAvailable(mediaId)) {
+        val offlineSong = offlineSongDao.getAvailableOfflineSong(mediaId)
+        if (offlineSong != null && java.io.File(offlineSong.localFilePath).exists()) {
             return ""
+        }
+        if (offlineSong != null) {
+            offlineSongDao.markUnavailable(mediaId)
         }
 
         val downloadId = UUID.randomUUID().toString()
@@ -69,17 +78,36 @@ class DownloadRepository @Inject constructor(
             // Already exists in downloads table - check if it's a completed download
             val existingDownload = downloadDao.getDownloadByMediaId(mediaId)
             if (existingDownload != null) {
-                // If it's completed but somehow offline check failed, don't re-download
-                if (existingDownload.status == DownloadStatus.COMPLETED) {
-                    return ""
+                when (existingDownload.status) {
+                    DownloadStatus.FAILED,
+                    DownloadStatus.COMPLETED -> {
+                        downloadDao.resetForRetry(existingDownload.id)
+                        scheduleDownload(
+                            existingDownload.copy(
+                                status = DownloadStatus.QUEUED,
+                                progress = 0f,
+                                bytesDownloaded = 0L,
+                                totalBytes = 0L,
+                                localFilePath = null,
+                                completedAt = null,
+                                failureReason = null,
+                                retryCount = 0
+                            ),
+                            ExistingWorkPolicy.REPLACE
+                        )
+                    }
+                    DownloadStatus.QUEUED -> {
+                        scheduleDownload(existingDownload, ExistingWorkPolicy.KEEP)
+                    }
+                    DownloadStatus.DOWNLOADING,
+                    DownloadStatus.PAUSED -> Unit
                 }
-                // If it's failed/paused, return existing ID (user can retry manually)
                 return existingDownload.id
             }
             return ""
         }
 
-        scheduleDownload(downloadEntity)
+        scheduleDownload(downloadEntity, ExistingWorkPolicy.KEEP)
 
         return downloadId
     }
@@ -90,14 +118,12 @@ class DownloadRepository @Inject constructor(
         }
     }
 
-    private fun scheduleDownload(download: DownloadEntity) {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .setRequiresStorageNotLow(true)
-            .build()
-
+    private fun scheduleDownload(
+        download: DownloadEntity,
+        existingWorkPolicy: ExistingWorkPolicy
+    ) {
         val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setConstraints(constraints)
+            .setConstraints(downloadConstraints())
             .setInputData(workDataOf(
                 DownloadWorker.KEY_DOWNLOAD_ID to download.id,
                 DownloadWorker.KEY_MEDIA_ID to download.mediaId,
@@ -112,9 +138,22 @@ class DownloadRepository @Inject constructor(
 
         workManager.enqueueUniqueWork(
             "download_${download.mediaId}",
-            ExistingWorkPolicy.KEEP,
+            existingWorkPolicy,
             workRequest
         )
+    }
+
+    /**
+     * Re-enqueues jobs left waiting by older builds that required Android's
+     * validated-internet signal. A configured LAN or USB-forwarded server can
+     * be reachable even when that signal is unavailable.
+     */
+    suspend fun reconcileQueuedDownloads() {
+        if (!hasReconciledQueuedDownloads.compareAndSet(false, true)) return
+
+        downloadDao.getQueuedDownloadsOnce().forEach { download ->
+            scheduleDownload(download, ExistingWorkPolicy.REPLACE)
+        }
     }
 
     suspend fun cancelDownload(downloadId: String) {
@@ -145,30 +184,7 @@ class DownloadRepository @Inject constructor(
         // Reset status and re-queue
         downloadDao.updateStatus(downloadId, DownloadStatus.QUEUED)
 
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .setRequiresStorageNotLow(true)
-            .build()
-
-        val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setConstraints(constraints)
-            .setInputData(workDataOf(
-                DownloadWorker.KEY_DOWNLOAD_ID to download.id,
-                DownloadWorker.KEY_MEDIA_ID to download.mediaId,
-                DownloadWorker.KEY_TITLE to download.title,
-                DownloadWorker.KEY_ARTIST to download.artist,
-                DownloadWorker.KEY_FORMAT to download.format,
-                DownloadWorker.KEY_IMAGE_URL to download.imageUrl
-            ))
-            .addTag("download")
-            .addTag("download_${download.mediaId}")
-            .build()
-
-        workManager.enqueueUniqueWork(
-            "download_${download.mediaId}",
-            ExistingWorkPolicy.REPLACE,
-            workRequest
-        )
+        scheduleDownload(download, ExistingWorkPolicy.REPLACE)
     }
 
     suspend fun retryDownload(downloadId: String) {
@@ -179,30 +195,7 @@ class DownloadRepository @Inject constructor(
         // Reset for retry
         downloadDao.resetForRetry(downloadId)
 
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .setRequiresStorageNotLow(true)
-            .build()
-
-        val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setConstraints(constraints)
-            .setInputData(workDataOf(
-                DownloadWorker.KEY_DOWNLOAD_ID to download.id,
-                DownloadWorker.KEY_MEDIA_ID to download.mediaId,
-                DownloadWorker.KEY_TITLE to download.title,
-                DownloadWorker.KEY_ARTIST to download.artist,
-                DownloadWorker.KEY_FORMAT to download.format,
-                DownloadWorker.KEY_IMAGE_URL to download.imageUrl
-            ))
-            .addTag("download")
-            .addTag("download_${download.mediaId}")
-            .build()
-
-        workManager.enqueueUniqueWork(
-            "download_${download.mediaId}",
-            ExistingWorkPolicy.REPLACE,
-            workRequest
-        )
+        scheduleDownload(download, ExistingWorkPolicy.REPLACE)
     }
 
     suspend fun clearCompleted() {
@@ -212,15 +205,13 @@ class DownloadRepository @Inject constructor(
     suspend fun deleteOfflineSong(songId: String) {
         val offlineSong = offlineSongDao.getOfflineSong(songId) ?: return
 
-        // Delete file
-        try {
-            val file = java.io.File(offlineSong.localFilePath)
-            if (file.exists()) {
-                file.delete()
-            }
-        } catch (_: Exception) {}
+        val file = java.io.File(offlineSong.localFilePath)
+        if (file.exists() && !file.delete()) {
+            throw IOException("Could not delete the offline audio file")
+        }
 
-        // Remove from database
+        // Only forget the database entry after the file is gone. Otherwise a
+        // failed deletion would leak storage with no way to remove it in-app.
         offlineSongDao.deleteBySongId(songId)
     }
 

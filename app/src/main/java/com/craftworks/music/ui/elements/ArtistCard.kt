@@ -81,6 +81,7 @@ fun ArtistCard(artist: MediaData.Artist, onClick: () -> Unit) {
                         GeneratedAlbumArtStatic(
                             title = artist.name,
                             artist = null,
+                            album = artist.navidromeID,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(12.dp))
@@ -100,6 +101,7 @@ fun ArtistCard(artist: MediaData.Artist, onClick: () -> Unit) {
                 GeneratedAlbumArtStatic(
                     title = artist.name,
                     artist = null,
+                    album = artist.navidromeID,
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)

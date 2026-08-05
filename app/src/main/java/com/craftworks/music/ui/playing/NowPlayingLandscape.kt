@@ -38,10 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -50,10 +48,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
-import coil.compose.AsyncImage
 import coil.request.CachePolicy
-import coil.request.ImageRequest
-import com.craftworks.music.R
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.ui.util.TextDisplayUtils
@@ -99,6 +95,7 @@ private fun NowPlayingTableTop(
     stripTrackNumbers: Boolean
 ) {
     val lyrics by LyricsState.lyrics.collectAsStateWithLifecycle()
+    val isAudiobook = metadata?.extras?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
 
     Column(Modifier.fillMaxHeight()) {
         Box(Modifier.weight(1f)) {
@@ -107,23 +104,12 @@ private fun NowPlayingTableTop(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(metadata?.artworkUri.toString().replace("size=128", "size=500"))
-                        .crossfade(true)
-                        .diskCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                        .memoryCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                        .build(),
-                    contentDescription = "Album Cover Art",
-                    placeholder = painterResource(R.drawable.placeholder),
-                    fallback = painterResource(R.drawable.placeholder),
-                    contentScale = ContentScale.FillWidth,
-                    alignment = Alignment.Center,
+                NowPlayingArtwork(
+                    metadata = metadata,
                     modifier = Modifier
                         .fillMaxHeight(0.7f)
                         .aspectRatio(1f)
-                        .shadow(4.dp, RoundedCornerShape(24.dp), clip = true)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .shadow(4.dp, RoundedCornerShape(24.dp), clip = true),
                 )
 
                 Spacer(Modifier.height(16.dp))
@@ -167,11 +153,15 @@ private fun NowPlayingTableTop(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     mediaController?.let {
-                        ShuffleButton(it, iconTextColor, Modifier.size(32.dp))
-                        PreviousSongButton(it, iconTextColor, Modifier.size(48.dp))
-                        PlayPauseButton(it, iconTextColor, Modifier.size(92.dp))
-                        NextSongButton(it, iconTextColor, Modifier.size(48.dp))
-                        RepeatButton(it, iconTextColor, Modifier.size(32.dp))
+                        if (isAudiobook) {
+                            AudiobookTransportControls(it, iconTextColor)
+                        } else {
+                            ShuffleButton(it, iconTextColor, Modifier.size(32.dp))
+                            PreviousSongButton(it, iconTextColor, Modifier.size(48.dp))
+                            PlayPauseButton(it, iconTextColor, Modifier.size(92.dp))
+                            NextSongButton(it, iconTextColor, Modifier.size(48.dp))
+                            RepeatButton(it, iconTextColor, Modifier.size(32.dp))
+                        }
                     }
                 }
 
@@ -184,10 +174,14 @@ private fun NowPlayingTableTop(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    LyricsButton(iconTextColor, 48.dp)
-                    FavoriteButton(iconTextColor, 48.dp, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
-                    DownloadButton(iconTextColor, 48.dp, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
-                    PlayQueueButton(iconTextColor, 48.dp)
+                    if (isAudiobook && mediaController != null) {
+                        AudiobookSecondaryControls(mediaController, iconTextColor, metadata, 48.dp)
+                    } else {
+                        LyricsButton(iconTextColor, 48.dp)
+                        FavoriteButton(iconTextColor, 48.dp, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                        DownloadButton(iconTextColor, 48.dp, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                        PlayQueueButton(iconTextColor, 48.dp)
+                    }
                 }
             }
         }
@@ -206,6 +200,7 @@ private fun NowPlayingLandscapeContent(
     val mainButtonSize = 92.dp
     val secondaryButtonSize = 48.dp
     val smallButtonSize = 32.dp
+    val isAudiobook = metadata?.extras?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
 
     Row {
         Column(
@@ -219,24 +214,13 @@ private fun NowPlayingLandscapeContent(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     /* Album Cover */
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(metadata?.artworkUri.toString().replace("size=128", "size=500"))
-                            .crossfade(true)
-                            .diskCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                            .memoryCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                            .build(),
-                        contentDescription = "Album Cover Art",
-                        placeholder = painterResource(R.drawable.placeholder),
-                        fallback = painterResource(R.drawable.placeholder),
-                        contentScale = ContentScale.FillWidth,
-                        alignment = Alignment.Center,
+                    NowPlayingArtwork(
+                        metadata = metadata,
                         modifier = Modifier
                             .fillMaxHeight(0.35f)
                             .widthIn(max = 300.dp)
                             .aspectRatio(1f)
-                            .shadow(4.dp, RoundedCornerShape(24.dp), clip = true)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                            .shadow(4.dp, RoundedCornerShape(24.dp), clip = true),
                     )
                 }
                 Spacer(Modifier.height(16.dp))
@@ -248,24 +232,13 @@ private fun NowPlayingLandscapeContent(
                     visible = lyricsOpen && isCompactHeight,
                     modifier = Modifier
                 ) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(metadata?.artworkUri.toString().replace("size=128", "size=500"))
-                            .diskCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                            .memoryCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "Album Cover Art",
-                        placeholder = painterResource(R.drawable.placeholder),
-                        fallback = painterResource(R.drawable.placeholder),
-                        contentScale = ContentScale.FillWidth,
-                        alignment = Alignment.Center,
+                    NowPlayingArtwork(
+                        metadata = metadata,
                         modifier = Modifier
                             .padding(start = 24.dp, end = 12.dp)
                             .height(64.dp)
                             .aspectRatio(1f)
-                            .shadow(4.dp, RoundedCornerShape(6.dp), clip = true)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                            .shadow(4.dp, RoundedCornerShape(6.dp), clip = true),
                     )
                 }
 
@@ -330,35 +303,45 @@ private fun NowPlayingLandscapeContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 mediaController?.let {
-                    ShuffleButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size(smallButtonSize)
-                    )
+                    if (isAudiobook) {
+                        AudiobookTransportControls(
+                            controller = it,
+                            color = iconTextColor,
+                            playButtonSize = mainButtonSize,
+                            chapterButtonSize = secondaryButtonSize,
+                            seekButtonSize = smallButtonSize
+                        )
+                    } else {
+                        ShuffleButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size(smallButtonSize)
+                        )
 
-                    PreviousSongButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size(secondaryButtonSize)
-                    )
+                        PreviousSongButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size(secondaryButtonSize)
+                        )
 
-                    PlayPauseButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size(mainButtonSize)
-                    )
+                        PlayPauseButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size(mainButtonSize)
+                        )
 
-                    NextSongButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size(secondaryButtonSize)
-                    )
+                        NextSongButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size(secondaryButtonSize)
+                        )
 
-                    RepeatButton(
-                        it,
-                        iconTextColor,
-                        Modifier.size(smallButtonSize)
-                    )
+                        RepeatButton(
+                            it,
+                            iconTextColor,
+                            Modifier.size(smallButtonSize)
+                        )
+                    }
                 }
             }
             // Extra buttons row - always visible
@@ -371,10 +354,14 @@ private fun NowPlayingLandscapeContent(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                LyricsButton(iconTextColor, secondaryButtonSize)
-                FavoriteButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
-                DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
-                PlayQueueButton(iconTextColor, secondaryButtonSize)
+                if (isAudiobook && mediaController != null) {
+                    AudiobookSecondaryControls(mediaController, iconTextColor, metadata, secondaryButtonSize)
+                } else {
+                    LyricsButton(iconTextColor, secondaryButtonSize)
+                    FavoriteButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                    DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                    PlayQueueButton(iconTextColor, secondaryButtonSize)
+                }
             }
         }
 
@@ -402,25 +389,14 @@ private fun NowPlayingLandscapeContent(
                 }
                 else {
                     /* Album Cover + Lyrics */
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(metadata?.artworkUri.toString().replace("size=128", "size=500"))
-                            .diskCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                            .memoryCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "Album Cover Art",
-                        placeholder = painterResource(R.drawable.placeholder),
-                        fallback = painterResource(R.drawable.placeholder),
-                        contentScale = ContentScale.FillWidth,
-                        alignment = Alignment.Center,
+                    NowPlayingArtwork(
+                        metadata = metadata,
                         modifier = Modifier
                             .padding(32.dp)
                             .fillMaxHeight()
                             .widthIn(max = 400.dp)
                             .aspectRatio(1f)
-                            .shadow(4.dp, RoundedCornerShape(24.dp), clip = true)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                            .shadow(4.dp, RoundedCornerShape(24.dp), clip = true),
                     )
                 }
             }

@@ -137,6 +137,47 @@ object Migrations {
     }
 
     /**
+     * Migration from version 6 to 7.
+     * Adds typed audiobook library metadata, embedded chapters, and offline-first progress.
+     */
+    val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `songs` ADD COLUMN `musicFolderId` INTEGER")
+            db.execSQL("ALTER TABLE `songs` ADD COLUMN `mediaCategory` TEXT NOT NULL DEFAULT 'music'")
+            db.execSQL("ALTER TABLE `songs` ADD COLUMN `bookmarkPosition` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `songs` ADD COLUMN `chaptersJson` TEXT NOT NULL DEFAULT '[]'")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_songs_mediaCategory` ON `songs` (`mediaCategory`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_songs_musicFolderId` ON `songs` (`musicFolderId`)")
+
+            db.execSQL("ALTER TABLE `albums` ADD COLUMN `musicFolderId` INTEGER")
+            db.execSQL("ALTER TABLE `albums` ADD COLUMN `mediaCategory` TEXT NOT NULL DEFAULT 'music'")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_albums_mediaCategory` ON `albums` (`mediaCategory`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_albums_musicFolderId` ON `albums` (`musicFolderId`)")
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `audiobook_progress` (
+                    `songId` TEXT NOT NULL,
+                    `albumId` TEXT NOT NULL,
+                    `positionMs` INTEGER NOT NULL,
+                    `durationMs` INTEGER NOT NULL,
+                    `completed` INTEGER NOT NULL,
+                    `playbackSpeed` REAL NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    `serverUpdatedAt` INTEGER NOT NULL,
+                    `syncPending` INTEGER NOT NULL,
+                    PRIMARY KEY(`songId`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_audiobook_progress_albumId` ON `audiobook_progress` (`albumId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_audiobook_progress_updatedAt` ON `audiobook_progress` (`updatedAt`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_audiobook_progress_completed` ON `audiobook_progress` (`completed`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_audiobook_progress_syncPending` ON `audiobook_progress` (`syncPending`)")
+        }
+    }
+
+    /**
      * List of all migrations in order.
      */
     val ALL_MIGRATIONS = arrayOf(
@@ -144,6 +185,7 @@ object Migrations {
         MIGRATION_2_3,
         MIGRATION_3_4,
         MIGRATION_4_5,
-        MIGRATION_5_6
+        MIGRATION_5_6,
+        MIGRATION_6_7
     )
 }

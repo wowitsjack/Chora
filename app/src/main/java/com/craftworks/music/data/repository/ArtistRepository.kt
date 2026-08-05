@@ -7,6 +7,7 @@ import com.craftworks.music.data.database.entity.toMediaDataAlbum
 import com.craftworks.music.data.datasource.local.LocalDataSource
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import com.craftworks.music.data.model.MediaData
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.data.model.toMediaItem
 import com.craftworks.music.managers.LocalProviderManager
 import com.craftworks.music.managers.NavidromeManager
@@ -46,7 +47,11 @@ class ArtistRepository @Inject constructor(
         if (NavidromeManager.checkActiveServers()) {
             deferredArtists.add(async {
                 try {
-                    navidromeDataSource.getNavidromeArtists(ignoreCachedResponse)
+                    val libraryIds = NavidromeManager.getEnabledLibraryIdsForCurrentServer(MediaCategory.MUSIC)
+                    if (libraryIds.isEmpty()) emptyList() else navidromeDataSource.getNavidromeArtists(
+                        ignoreCachedResponse = ignoreCachedResponse,
+                        musicFolderIds = libraryIds
+                    )
                 } catch (e: Exception) {
                     Log.e("ArtistRepository", "Failed to fetch Navidrome artists", e)
                     emptyList()
@@ -76,7 +81,12 @@ class ArtistRepository @Inject constructor(
         if (NavidromeManager.checkActiveServers())
             deferredArtists.add(async {
                 try {
-                    navidromeDataSource.searchNavidromeArtists(query, ignoreCachedResponse)
+                    val libraryIds = NavidromeManager.getEnabledLibraryIdsForCurrentServer(MediaCategory.MUSIC)
+                    if (libraryIds.isEmpty()) emptyList() else navidromeDataSource.searchNavidromeArtists(
+                        query,
+                        ignoreCachedResponse,
+                        musicFolderIds = libraryIds
+                    )
                 } catch (e: Exception) {
                     Log.e("ArtistRepository", "Failed to search Navidrome artists", e)
                     emptyList()
@@ -86,18 +96,30 @@ class ArtistRepository @Inject constructor(
         deferredArtists.awaitAll().flatten()
     }
 
-    suspend fun getArtistAlbums(artistId: String, ignoreCachedResponse: Boolean = false): List<MediaItem> = supervisorScope {
+    suspend fun getArtistAlbums(
+        artistId: String,
+        artistName: String? = null,
+        ignoreCachedResponse: Boolean = false
+    ): List<MediaItem> = supervisorScope {
         if (artistId.startsWith("Local_")) {
             async { localDataSource.getLocalArtistAlbums(artistId) }.await()
         } else {
             // Cache-first strategy: check Room database first
             if (!ignoreCachedResponse) {
-                val cachedAlbums = async { albumDao.getAlbumsByArtistOnce(artistId) }.await()
+                val cachedById = async { albumDao.getAlbumsByArtistOnce(artistId) }.await()
+                val cachedAlbums = if (cachedById.isNotEmpty() || artistName.isNullOrBlank()) {
+                    cachedById
+                } else {
+                    async { albumDao.getAlbumsByArtistNameOnce(artistName) }.await()
+                }
                 if (cachedAlbums.isNotEmpty()) {
                     return@supervisorScope cachedAlbums.map { it.toMediaDataAlbum().toMediaItem() }
                 }
             }
-            async { navidromeDataSource.getNavidromeArtistAlbums(artistId, ignoreCachedResponse) }.await()
+            async {
+                navidromeDataSource.getNavidromeArtistAlbums(artistId, ignoreCachedResponse)
+                    .filter { it.mediaMetadata.extras?.getString("mediaCategory") != MediaCategory.AUDIOBOOK }
+            }.await()
         }
     }
 

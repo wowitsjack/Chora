@@ -45,8 +45,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         debug {
-            isDebuggable = false
-            isProfileable = true
+            isDebuggable = true
         }
     }
     compileOptions {
@@ -110,6 +109,7 @@ dependencies {
     implementation(libs.composefadingedges)
 
     testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.ui.test.junit4)

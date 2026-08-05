@@ -12,6 +12,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.craftworks.music.R
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.data.model.MediaData
 import com.craftworks.music.managers.LocalProviderManager
 import com.craftworks.music.ui.util.TextDisplayUtils
@@ -306,13 +307,16 @@ class LocalProvider @Inject constructor(
                     .setTrackNumber(track)
                     .setRecordingYear(year)
                     .setDurationMs(duration.toLong())
+                    .setGenre(genre.takeIf { it.isNotBlank() })
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
                     .setExtras(Bundle().apply {
                         putString("navidromeID", "$LOCAL_PREFIX$id")
+                        putString("albumId", "$LOCAL_PREFIX$albumId")
                         putString("artistId", "$LOCAL_PREFIX${artist.hashCode()}")
                         putString("format", format.drop(6))
                         putInt("bitrate", bitrate / 1000)
                         putString("path", path)
+                        putString("mediaCategory", MediaCategory.MUSIC)
                     })
                     .build()
 
@@ -413,13 +417,16 @@ class LocalProvider @Inject constructor(
                     .setTrackNumber(track)
                     .setRecordingYear(year)
                     .setDurationMs(duration.toLong())
+                    .setGenre(genre.takeIf { it.isNotBlank() })
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
                     .setExtras(Bundle().apply {
                         putString("navidromeID", "$LOCAL_PREFIX$id")
+                        putString("albumId", "$LOCAL_PREFIX$albumId")
                         putString("artistId", "$LOCAL_PREFIX${artist.hashCode()}")
                         putString("format", format.drop(6))
                         putInt("bitrate", bitrate / 1000)
                         putString("path", path)
+                        putString("mediaCategory", MediaCategory.MUSIC)
                     })
                     .build()
 

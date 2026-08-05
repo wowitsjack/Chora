@@ -76,7 +76,7 @@ fun PlaylistCard(playlist: MediaItem,
                     .diskCacheKey(metadata.extras?.getString("navidromeID") ?: playlist.mediaId)
                     .memoryCacheKey(metadata.extras?.getString("navidromeID") ?: playlist.mediaId)
                     .build(),
-                contentScale = ContentScale.FillWidth,
+                contentScale = ContentScale.Crop,
                 contentDescription = "Playlist Image",
                 modifier = Modifier
                     .fillMaxWidth()
@@ -88,6 +88,7 @@ fun PlaylistCard(playlist: MediaItem,
                         GeneratedAlbumArtStatic(
                             title = metadata.title?.toString() ?: "?",
                             artist = null,
+                            album = playlist.mediaId,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(12.dp))
@@ -107,6 +108,7 @@ fun PlaylistCard(playlist: MediaItem,
                 GeneratedAlbumArtStatic(
                     title = metadata.title?.toString() ?: "?",
                     artist = null,
+                    album = playlist.mediaId,
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)

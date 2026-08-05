@@ -16,6 +16,7 @@
         <string name="Setting_StripTrackNumbers">Hide Track Numbers in Titles</string>
         <string name="Setting_StripTrackNumbers_Description">Hides track number prefixes like \"01 - \" from song titles</string>
         <string name="Setting_GeneratedArtwork">Generated Album Art</string>
+        <string name="Setting_IpodTouchMode">iPod touch Music mode</string>
     <string name="Settings_Header_Media">Media Providers</string>
     <string name="Settings_Header_Playback">Playback</string>
         <string name="Setting_Transcoding">Max Bitrate</string>
@@ -31,6 +32,8 @@
         <string name="Setting_Queue_Bottom">Bottom of queue</string>
         <string name="Setting_Queue_Top">After current song</string>
         <string name="Action_Add_To_Queue">Add to Queue</string>
+        <string name="Action_Add_To_Queue_Top">Add to top of queue</string>
+        <string name="Action_Add_To_Queue_Bottom">Add to bottom of queue</string>
         <string name="Action_Play_Next">Play Next</string>
         <string name="Queue_Clear">Clear Queue</string>
         <string name="Queue_Title">Queue</string>

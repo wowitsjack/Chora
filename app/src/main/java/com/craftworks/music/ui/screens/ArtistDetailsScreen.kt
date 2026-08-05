@@ -168,10 +168,10 @@ fun ArtistDetails(
                                 .build(),
                             placeholder = painterResource(R.drawable.s_a_username),
                             fallback = painterResource(R.drawable.s_a_username),
-                            contentScale = ContentScale.FillWidth,
+                            contentScale = ContentScale.Crop,
                             contentDescription = "Artist Image",
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .fillMaxSize()
                                 .fadingEdge(imageFadingEdge)
                                 .clip(
                                     if (artist?.description != "") RoundedCornerShape(

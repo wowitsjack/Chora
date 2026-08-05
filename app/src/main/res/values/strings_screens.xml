@@ -6,6 +6,47 @@
     <string name="most_played">Most Played</string>
     <string name="recently_played">Recently Played</string>
     <string name="random_songs">Explore From Your Library</string>
+    <string name="Home_Discovery_Eyebrow">Discovery</string>
+    <string name="Home_Discovery_Title">Need something to play?</string>
+    <string name="Home_Discovery_Description">Build a fresh 50-song mix from across your library. Nothing is saved.</string>
+    <string name="Home_Discovery_Action">Build Me a Playlist</string>
+    <string name="Home_Discovery_Building">Building…</string>
+    <string name="Home_Discovery_Empty">No playable songs were found.</string>
+    <string name="Home_Discovery_Error">Couldn’t build a mix right now. Try again.</string>
+
+    <!-- Audiobooks -->
+    <string name="Audiobooks">Audiobooks</string>
+    <string name="Audiobooks_Continue">Continue Listening</string>
+    <string name="Audiobooks_Downloaded">Downloaded</string>
+    <string name="Audiobooks_Finished">Finished</string>
+    <string name="Audiobooks_All">All Books</string>
+    <string name="Audiobooks_Empty_Title">No audiobooks yet</string>
+    <string name="Audiobooks_Empty_Description">Enable an Audiobooks library in your Navidrome provider, then sync.</string>
+    <string name="Audiobooks_Resume">Resume</string>
+    <string name="Audiobooks_Start">Start</string>
+    <string name="Audiobooks_Restart">Start Over</string>
+    <string name="Audiobooks_Download_Book">Download Book</string>
+    <string name="Audiobooks_Download_Listen">Download &amp; Listen</string>
+    <string name="Audiobooks_Available_Offline">Available Offline</string>
+    <string name="Audiobooks_Progress_Saved_Offline">Progress saved on this device · syncs when online</string>
+    <string name="Audiobooks_Download_Part">Download part</string>
+    <string name="Audiobooks_Time_Left">%1$s left</string>
+    <string name="Audiobooks_Parts_Chapters">Parts &amp; Chapters</string>
+    <string name="Audiobooks_No_Chapters">No embedded chapter markers</string>
+    <string name="Audiobooks_Speed">Speed</string>
+    <string name="Audiobooks_Sleep">Sleep</string>
+    <string name="Home_Audiobooks_Continue">Continue %1$s</string>
+    <string name="Home_Audiobooks_Count">%1$d books in your library</string>
+
+    <!-- Mixes -->
+    <string name="Action_Instant_Mix">Instant Mix</string>
+    <string name="Instant_Mix_Building">Building an instant mix…</string>
+    <string name="Instant_Mix_Error">Couldn’t build an instant mix.</string>
+
+    <!-- Queue -->
+    <string name="Queue_Empty_Title">Your queue is empty</string>
+    <string name="Queue_Empty_Description">Add a song, start an instant mix, or build a playlist from Home.</string>
+    <string name="Queue_Remove_Item">Remove %1$s from queue</string>
 
     <!-- Artist Details -->
     <string name="Screen_Discography">Discography</string>

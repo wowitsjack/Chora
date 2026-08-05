@@ -92,12 +92,14 @@ import com.craftworks.music.ui.elements.GenrePill
 import com.craftworks.music.ui.elements.HorizontalSongCard
 import com.craftworks.music.ui.elements.SelectionActionBar
 import com.craftworks.music.ui.elements.SwipeableToQueueSongCard
+import com.craftworks.music.ui.elements.artworkDataAtSize
 import com.craftworks.music.ui.elements.dialogs.AddSongToPlaylist
 import com.craftworks.music.ui.elements.dialogs.dialogFocusable
 import com.craftworks.music.ui.util.LayoutMode
 import com.craftworks.music.ui.util.rememberFoldableState
 import com.craftworks.music.ui.viewmodels.AlbumDetailsViewModel
 import com.craftworks.music.ui.viewmodels.DownloadViewModel
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -110,7 +112,8 @@ fun AlbumDetails(
     navHostController: NavHostController = rememberNavController(),
     mediaController: MediaController? = null,
     viewModel: AlbumDetailsViewModel = hiltViewModel(),
-    downloadViewModel: DownloadViewModel = hiltViewModel()
+    downloadViewModel: DownloadViewModel = hiltViewModel(),
+    songActionsViewModel: SongActionsViewModel = hiltViewModel()
 ) {
     val foldableState = rememberFoldableState()
     val useSplitLayout = foldableState.layoutMode in listOf(
@@ -267,7 +270,8 @@ fun AlbumDetails(
                             val selected = songs.filter { selectedSongIds.contains(it.mediaId) }
                             downloadViewModel.queueDownloads(selected.map { it.mediaMetadata })
                             exitSelectionMode()
-                        }
+                        },
+                        onInstantMix = songActionsViewModel::buildInstantMix
                     )
                 }
             }
@@ -349,7 +353,8 @@ fun AlbumDetails(
                             val selected = songs.filter { selectedSongIds.contains(it.mediaId) }
                             downloadViewModel.queueDownloads(selected.map { it.mediaMetadata })
                             exitSelectionMode()
-                        }
+                        },
+                        onInstantMix = songActionsViewModel::buildInstantMix
                     )
                 }
             }
@@ -383,7 +388,8 @@ fun AlbumDetails(
                         val selected = songs.filter { selectedSongIds.contains(it.mediaId) }
                         downloadViewModel.queueDownloads(selected.map { it.mediaMetadata })
                         exitSelectionMode()
-                    }
+                    },
+                    onInstantMix = songActionsViewModel::buildInstantMix
                 )
             }
         }
@@ -446,9 +452,10 @@ private fun AlbumHeader(
             GeneratedAlbumArtStatic(
                 title = albumTitle,
                 artist = albumArtist,
+                album = selectedAlbumId,
                 size = 224.dp,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .fadingEdge(imageFadingEdge)
                     .clip(RoundedCornerShape(12.dp, 12.dp, 0.dp, 0.dp))
                     .blur(8.dp),
@@ -460,15 +467,15 @@ private fun AlbumHeader(
             // Try to load actual artwork with generated art as fallback
             SubcomposeAsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(imageToShow)
-                    .diskCacheKey(selectedAlbumId)
-                    .memoryCacheKey(selectedAlbumId)
+                    .data(artworkDataAtSize(imageToShow, 1024))
+                    .diskCacheKey("${selectedAlbumId}_art_1024")
+                    .memoryCacheKey("${selectedAlbumId}_art_1024")
                     .crossfade(true)
                     .build(),
-                contentScale = ContentScale.FillWidth,
+                contentScale = ContentScale.Crop,
                 contentDescription = "Album Image",
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .fadingEdge(imageFadingEdge)
                     .clip(RoundedCornerShape(12.dp, 12.dp, 0.dp, 0.dp))
                     .blur(8.dp),
@@ -477,8 +484,9 @@ private fun AlbumHeader(
                         GeneratedAlbumArtStatic(
                             title = albumTitle,
                             artist = albumArtist,
+                            album = selectedAlbumId,
                             size = 224.dp,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxSize(),
                             artworkStyle = artworkStyle,
                             colorPalette = colorPalette,
                             showInitialsOverride = showInitials
@@ -727,7 +735,8 @@ private fun AlbumSongList(
     selectedSongIds: MutableList<String> = mutableListOf(),
     onEnterSelectionMode: (String) -> Unit = {},
     onSelectionChange: (String, Boolean) -> Unit = { _, _ -> },
-    onDownloadSelected: () -> Unit = {}
+    onDownloadSelected: () -> Unit = {},
+    onInstantMix: (suspend (MediaItem) -> List<MediaItem>)? = null
 ) {
     // Read artwork settings at parent level for performance
     val context = LocalContext.current
@@ -803,12 +812,10 @@ private fun AlbumSongList(
                             artworkStyle = artworkStyle,
                             colorPalette = colorPalette,
                             showInitials = showInitials,
+                            onInstantMix = onInstantMix,
                             onClick = {
                                 coroutineScope.launch {
-                                    val index = songs.indexOf(song)
-                                    if (index != -1) {
-                                        SongHelper.play(songs, index, mediaController)
-                                    }
+                                    SongHelper.playNow(song, mediaController)
                                 }
                             }
                         )
@@ -833,12 +840,10 @@ private fun AlbumSongList(
                         artworkStyle = artworkStyle,
                         colorPalette = colorPalette,
                         showInitials = showInitials,
+                        onInstantMix = onInstantMix,
                         onClick = {
                             coroutineScope.launch {
-                                val index = songs.indexOf(song)
-                                if (index != -1) {
-                                    SongHelper.play(songs, index, mediaController)
-                                }
+                                SongHelper.playNow(song, mediaController)
                             }
                         }
                     )
@@ -868,7 +873,8 @@ private fun AlbumDetailsCompact(
     selectedSongIds: MutableList<String> = mutableListOf(),
     onEnterSelectionMode: (String) -> Unit = {},
     onSelectionChange: (String, Boolean) -> Unit = { _, _ -> },
-    onDownloadSelected: () -> Unit = {}
+    onDownloadSelected: () -> Unit = {},
+    onInstantMix: (suspend (MediaItem) -> List<MediaItem>)? = null
 ) {
     val context = LocalContext.current
 
@@ -1043,12 +1049,10 @@ private fun AlbumDetailsCompact(
                         artworkStyle = artworkStyle,
                         colorPalette = colorPalette,
                         showInitials = showInitials,
+                        onInstantMix = onInstantMix,
                         onClick = {
                             coroutineScope.launch {
-                                val index = songs.indexOf(song)
-                                if (index != -1) {
-                                    SongHelper.play(songs, index, mediaController)
-                                }
+                                SongHelper.playNow(song, mediaController)
                             }
                         }
                     )
@@ -1073,12 +1077,10 @@ private fun AlbumDetailsCompact(
                     artworkStyle = artworkStyle,
                     colorPalette = colorPalette,
                     showInitials = showInitials,
+                    onInstantMix = onInstantMix,
                     onClick = {
                         coroutineScope.launch {
-                            val index = songs.indexOf(song)
-                            if (index != -1) {
-                                SongHelper.play(songs, index, mediaController)
-                            }
+                            SongHelper.playNow(song, mediaController)
                         }
                     }
                 )

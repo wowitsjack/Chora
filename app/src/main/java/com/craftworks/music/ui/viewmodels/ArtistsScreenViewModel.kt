@@ -15,8 +15,7 @@ import com.craftworks.music.data.repository.SyncRepository
 import com.craftworks.music.ui.util.TextDisplayUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -151,6 +150,7 @@ class ArtistsScreenViewModel @Inject constructor(
 
     fun setSelectedArtist(artist: MediaData.Artist) {
         _selectedArtist.value = artist
+        _artistAlbums.value = emptyList()
         viewModelScope.launch {
             val loadingJob = launch {
                 delay(1000)
@@ -159,18 +159,22 @@ class ArtistsScreenViewModel @Inject constructor(
                 }
             }
             try {
-                coroutineScope {
-                    // Run both requests in parallel
-                    val artistAlbumsDeferred = async { artistRepository.getArtistAlbums(artist.navidromeID) }
-                    val artistDetailsDeferred = async { artistRepository.getArtistInfo(artist.navidromeID) }
+                _artistAlbums.value = artistRepository.getArtistAlbums(
+                    artistId = artist.navidromeID,
+                    artistName = artist.name
+                )
 
-                    _artistAlbums.value = artistAlbumsDeferred.await()
-                    val artistDetails = artistDetailsDeferred.await()
+                try {
+                    val artistDetails = artistRepository.getArtistInfo(artist.navidromeID)
                     _selectedArtist.value = _selectedArtist.value?.copy(
                         description = artistDetails?.biography ?: "",
                         musicBrainzId = artistDetails?.musicBrainzId,
                         similarArtist = artistDetails?.similarArtist
                     )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

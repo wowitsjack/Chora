@@ -21,7 +21,37 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.net.URI
 import javax.inject.Inject
+
+internal fun normalizeNavidromeUrl(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return null
+
+    val candidate = when {
+        trimmed.startsWith("http://", ignoreCase = true) ||
+                trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+        "://" in trimmed -> return null
+        else -> "http://$trimmed"
+    }
+
+    val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
+    if (uri.scheme?.lowercase() !in setOf("http", "https")) return null
+    if (uri.host.isNullOrBlank() || uri.userInfo != null || uri.query != null || uri.fragment != null) {
+        return null
+    }
+
+    return candidate.trimEnd('/')
+}
+
+internal fun validateNavidromeInput(url: String, username: String, password: String): String? =
+    when {
+        url.isBlank() -> "Enter a server URL"
+        normalizeNavidromeUrl(url) == null -> "Enter a valid HTTP or HTTPS URL"
+        username.isBlank() -> "Enter a username"
+        password.isBlank() -> "Enter a password"
+        else -> null
+    }
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
@@ -109,19 +139,31 @@ class OnboardingViewModel @Inject constructor(
 
     // Navidrome field updates
     fun updateNavidromeUrl(url: String) {
-        _navidromeUrl.value = url
+        if (_navidromeUrl.value != url) {
+            _navidromeUrl.value = url
+            resetConnectionTest()
+        }
     }
 
     fun updateNavidromeUsername(username: String) {
-        _navidromeUsername.value = username
+        if (_navidromeUsername.value != username) {
+            _navidromeUsername.value = username
+            resetConnectionTest()
+        }
     }
 
     fun updateNavidromePassword(password: String) {
-        _navidromePassword.value = password
+        if (_navidromePassword.value != password) {
+            _navidromePassword.value = password
+            resetConnectionTest()
+        }
     }
 
     fun updateAllowSelfSignedCerts(allow: Boolean) {
-        _allowSelfSignedCerts.value = allow
+        if (_allowSelfSignedCerts.value != allow) {
+            _allowSelfSignedCerts.value = allow
+            resetConnectionTest()
+        }
     }
 
     // Local folder field updates
@@ -145,25 +187,39 @@ class OnboardingViewModel @Inject constructor(
 
     // Test Navidrome connection
     fun testNavidromeConnection() {
+        if (_connectionTestStatus.value is ConnectionStatus.Testing) return
+
+        val validationError = validateNavidromeInput(
+            _navidromeUrl.value,
+            _navidromeUsername.value,
+            _navidromePassword.value
+        )
+        if (validationError != null) {
+            _connectionTestStatus.value = ConnectionStatus.Error(validationError)
+            return
+        }
+
+        val normalizedUrl = requireNotNull(normalizeNavidromeUrl(_navidromeUrl.value))
+        _navidromeUrl.value = normalizedUrl
+
         viewModelScope.launch {
             _connectionTestStatus.value = ConnectionStatus.Testing
             try {
                 val server = NavidromeProvider(
-                    _navidromeUrl.value,
-                    _navidromeUrl.value,
+                    normalizedUrl,
+                    normalizedUrl,
                     _navidromeUsername.value,
                     _navidromePassword.value,
                     true,
                     _allowSelfSignedCerts.value
                 )
-                getNavidromeStatus(server, context)
+                val status = getNavidromeStatus(server, context)
 
-                // Watch for status change
-                when (navidromeStatus.value) {
+                when (status) {
                     "ok" -> _connectionTestStatus.value = ConnectionStatus.Success
                     "Invalid URL" -> _connectionTestStatus.value = ConnectionStatus.Error("Invalid URL")
                     "Wrong username or password" -> _connectionTestStatus.value = ConnectionStatus.Error("Wrong username or password")
-                    else -> _connectionTestStatus.value = ConnectionStatus.Error(navidromeStatus.value.ifEmpty { "Connection failed" })
+                    else -> _connectionTestStatus.value = ConnectionStatus.Error(status.ifEmpty { "Connection failed" })
                 }
             } catch (e: Exception) {
                 _connectionTestStatus.value = ConnectionStatus.Error(e.message ?: "Connection failed")
@@ -173,6 +229,8 @@ class OnboardingViewModel @Inject constructor(
 
     // Add Navidrome server
     fun addNavidromeServer() {
+        if (_connectionTestStatus.value !is ConnectionStatus.Success) return
+
         viewModelScope.launch {
             _isLoading.value = true
             try {
@@ -215,9 +273,15 @@ class OnboardingViewModel @Inject constructor(
     fun completeOnboarding() {
         viewModelScope.launch {
             try {
-                // Save the user's preferred name if provided
-                if (_preferredName.value.isNotBlank()) {
-                    appearanceSettingsManager.setUsername(_preferredName.value)
+                val displayName = _preferredName.value.trim().ifEmpty {
+                    if (_selectedProviderType.value == ProviderType.NAVIDROME) {
+                        _navidromeUsername.value.trim()
+                    } else {
+                        ""
+                    }
+                }
+                if (displayName.isNotEmpty()) {
+                    appearanceSettingsManager.setUsername(displayName)
                 }
                 val providerType = _selectedProviderType.value ?: ProviderType.NONE
                 onboardingSettingsManager.completeOnboarding(providerType)
@@ -268,6 +332,13 @@ class OnboardingViewModel @Inject constructor(
 
     fun updateNotificationPermissionGranted(granted: Boolean) {
         _notificationPermissionGranted.value = granted
+    }
+
+    private fun resetConnectionTest() {
+        if (_connectionTestStatus.value !is ConnectionStatus.Idle) {
+            _connectionTestStatus.value = ConnectionStatus.Idle
+            navidromeStatus.value = ""
+        }
     }
 
     // Reset state for a fresh start

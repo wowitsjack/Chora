@@ -6,6 +6,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.compose.ui.util.fastFilter
@@ -15,8 +16,6 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
-import com.craftworks.music.ui.util.GeneratedArtworkBitmap
-import java.io.ByteArrayOutputStream
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -29,17 +28,24 @@ import androidx.media3.session.MediaSession.MediaItemsWithStartPosition
 import androidx.media3.session.SessionError
 import com.craftworks.music.MainActivity
 import com.craftworks.music.R
+import com.craftworks.music.data.requireUsableNavidromeServerUrl
 import com.craftworks.music.data.model.toMediaItem
 import com.craftworks.music.data.repository.AlbumRepository
+import com.craftworks.music.data.repository.AudiobookBook
+import com.craftworks.music.data.repository.AudiobookProgressRepository
+import com.craftworks.music.data.repository.AudiobookRepository
 import com.craftworks.music.data.repository.ArtistRepository
 import com.craftworks.music.data.repository.LyricsRepository
 import com.craftworks.music.data.repository.PlaylistRepository
 import com.craftworks.music.data.repository.RadioRepository
 import com.craftworks.music.data.repository.SongRepository
 import com.craftworks.music.data.repository.StarredRepository
+import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.managers.NavidromeManager
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
 import com.craftworks.music.managers.settings.PlaybackSettingsManager
+import com.craftworks.music.providers.navidrome.generateSalt
+import com.craftworks.music.providers.navidrome.md5Hash
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -48,17 +54,45 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import javax.inject.Inject
 import kotlin.math.pow
+
+internal fun buildNavidromeStreamUrl(
+    serverUrl: String,
+    username: String,
+    password: String,
+    songId: String,
+    bitrateOptions: String,
+    salt: String = generateSalt(8)
+): String {
+    fun encode(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+
+    val query = buildString {
+        append("id=${encode(songId)}")
+        append("&u=${encode(username)}")
+        append("&t=${md5Hash(password + salt)}")
+        append("&s=${encode(salt)}")
+        append("&v=1.16.1&c=Chora")
+        append(bitrateOptions)
+    }
+    val usableServerUrl = requireUsableNavidromeServerUrl(serverUrl)
+    return "$usableServerUrl/rest/stream.view?$query"
+}
 
 /*
     Thanks to Yurowitz on StackOverflow for this! Used it as a template.
@@ -74,8 +108,11 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
     private var scrobbleJob: Job? = null
     private var playerListener: Player.Listener? = null
+    private val artistNamesById = ConcurrentHashMap<String, String>()
+    private val queueWindowExtensionInProgress = AtomicBoolean(false)
 
     @Inject lateinit var playbackSettingsManager: PlaybackSettingsManager
+    @Inject lateinit var localDataSettingsManager: LocalDataSettingsManager
 
     @Inject lateinit var albumRepository: AlbumRepository
     @Inject lateinit var artistRepository: ArtistRepository
@@ -85,6 +122,8 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     @Inject lateinit var lyricsRepository: LyricsRepository
     @Inject lateinit var starredRepository: StarredRepository
     @Inject lateinit var offlineMediaResolver: OfflineMediaResolver
+    @Inject lateinit var audiobookProgressRepository: AudiobookProgressRepository
+    @Inject lateinit var audiobookRepository: AudiobookRepository
 
     companion object {
         private var instance: ChoraMediaLibraryService? = null
@@ -207,6 +246,24 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         )
         .build()
 
+    private val audiobooksItem = MediaItem.Builder()
+        .setMediaId("nodeAUDIOBOOKS")
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setIsBrowsable(true)
+                .setIsPlayable(false)
+                .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS)
+                .setTitle("Audiobooks")
+                .setExtras(Bundle().apply {
+                    putInt(
+                        MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE,
+                        MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_GRID_ITEM
+                    )
+                })
+                .build()
+        )
+        .build()
+
     private val artistsItem = MediaItem.Builder()
         .setMediaId("nodeARTISTS")
         .setMediaMetadata(
@@ -228,6 +285,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     private val rootHierarchy = listOf(
         shuffleAllItem,
         homeItem,
+        audiobooksItem,
         albumsItem,
         artistsItem,
         favoritesItem,
@@ -235,14 +293,19 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         radiosItem
     )
 
-    private val serviceMainScope = CoroutineScope(Dispatchers.Main + Job())
-    private val serviceIOScope = CoroutineScope(Dispatchers.IO + Job())
+    private val serviceMainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val serviceIOScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val playbackPersistenceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var playbackStateSaveJob: Job? = null
+    private var lastPeriodicPlaybackSaveAt = 0L
+    private var lastAudiobookSnapshot: AudiobookPlaybackSnapshot? = null
 
     // Thread-safe synchronized lists for Android Auto browsing
     private val aHomeScreenItems: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
     private val aRadioScreenItems: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
     private val aPlaylistScreenItems: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
     private val aAlbumScreenItems: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
+    private val aAudiobookScreenItems: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
     private val aArtistScreenItems: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
     private val aFavoriteScreenItems: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
     private val aFolderSongs: MutableList<MediaItem> = Collections.synchronizedList(mutableListOf())
@@ -291,6 +354,11 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
         playerListener = object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                lastAudiobookSnapshot?.let { snapshot ->
+                    persistAudiobookSnapshot(snapshot, syncImmediately = true)
+                }
+                lastAudiobookSnapshot = null
+
                 // Apply ReplayGain
                 if (mediaItem?.mediaMetadata?.extras?.getFloat("replayGain") != null) {
                     player.volume = clamp(
@@ -303,12 +371,31 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
                 playerScrobbled.set(false)
 
+                val isAudiobook = mediaItem?.mediaMetadata?.extras
+                    ?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
+                if (isAudiobook) {
+                    val albumId = mediaItem?.mediaMetadata?.extras?.getString("albumId")
+                    serviceIOScope.launch {
+                        val speed = albumId?.let { audiobookProgressRepository.getBookSpeed(it) } ?: 1f
+                        withContext(Dispatchers.Main) {
+                            if (player.currentMediaItem?.mediaId == mediaItem?.mediaId) {
+                                player.setPlaybackSpeed(speed)
+                            }
+                        }
+                    }
+                } else {
+                    player.setPlaybackSpeed(1f)
+                }
+
                 super.onMediaItemTransition(mediaItem, reason)
+                extendPlaybackQueueWindowIfNeeded()
 
                 serviceIOScope.launch {
                     try {
-                        songRepository.scrobbleSong(mediaItem?.mediaMetadata?.extras?.getString("navidromeID") ?: "", false)
-                        lyricsRepository.getLyrics(mediaItem?.mediaMetadata)
+                        if (!isAudiobook) {
+                            songRepository.scrobbleSong(mediaItem?.mediaMetadata?.extras?.getString("navidromeID") ?: "", false)
+                            lyricsRepository.getLyrics(mediaItem?.mediaMetadata)
+                        }
                     } catch (e: Exception) {
                         Log.e("PLAYER", "Error scrobbling or fetching lyrics", e)
                     }
@@ -318,6 +405,50 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             override fun onPlayerError(error: PlaybackException) {
                 error.printStackTrace()
                 Log.e("PLAYER", error.stackTraceToString())
+            }
+
+            override fun onEvents(player: Player, events: Player.Events) {
+                val stateChanged =
+                    events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                        events.contains(Player.EVENT_TIMELINE_CHANGED) ||
+                        events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
+                        events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) ||
+                        events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
+                        events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
+                        events.contains(Player.EVENT_PLAYBACK_PARAMETERS_CHANGED)
+
+                if (stateChanged) {
+                    val saveDelay = if (
+                        !player.isPlaying || player.playbackState == Player.STATE_ENDED
+                    ) {
+                        0L
+                    } else {
+                        500L
+                    }
+                    schedulePlaybackStateSave(saveDelay)
+                }
+
+                val audiobookStateChanged =
+                    events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
+                        events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) ||
+                        events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
+                        events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
+                        events.contains(Player.EVENT_PLAYBACK_PARAMETERS_CHANGED)
+                if (audiobookStateChanged) {
+                    captureAudiobookSnapshot(player)?.let { snapshot ->
+                        lastAudiobookSnapshot = snapshot
+                        val immediate = !player.isPlaying || player.playbackState == Player.STATE_ENDED
+                        persistAudiobookSnapshot(snapshot, syncImmediately = immediate)
+                    }
+                }
+
+                if (
+                    events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                    events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
+                    events.contains(Player.EVENT_TIMELINE_CHANGED)
+                ) {
+                    extendPlaybackQueueWindowIfNeeded()
+                }
             }
         }
         playerListener?.let { player.addListener(it) }
@@ -338,6 +469,8 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             .setSessionActivity(sessionActivityPendingIntent)
             .build()
 
+        restoreSavedPlaybackQueue()
+
         scrobbleJob = serviceMainScope.launch {
             while (isActive) {
                 // Guard against accessing player after release
@@ -350,6 +483,19 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     val duration = player.duration
                     val mediaItem = player.currentMediaItem
 
+                    captureAudiobookSnapshot(player)?.let { snapshot ->
+                        lastAudiobookSnapshot = snapshot
+                    }
+
+                    val now = SystemClock.elapsedRealtime()
+                    if (player.isPlaying && now - lastPeriodicPlaybackSaveAt >= 15_000L) {
+                        lastPeriodicPlaybackSaveAt = now
+                        schedulePlaybackStateSave(delayMs = 0L)
+                        lastAudiobookSnapshot?.let { snapshot ->
+                            persistAudiobookSnapshot(snapshot, syncImmediately = false)
+                        }
+                    }
+
                     if (duration > 0 && !playerScrobbled.get()) {
                         val currentPosition = player.currentPosition
                         // Use Double to avoid integer overflow and precision loss
@@ -361,7 +507,8 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                             if (NavidromeManager.checkActiveServers() &&
                                 mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
                                     ?.startsWith("Local") == false &&
-                                mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
+                                mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
+                                mediaItem.mediaMetadata.extras?.getString("mediaCategory") != MediaCategory.AUDIOBOOK
                             ) {
                                 serviceIOScope.launch {
                                     try {
@@ -382,6 +529,51 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         }
 
         Log.d("AA", "Initialized MediaLibraryService.")
+    }
+
+    private fun extendPlaybackQueueWindowIfNeeded() {
+        if (!::player.isInitialized) return
+
+        val extension = SongHelper.planQueueWindowExtension(
+            currentIndex = player.currentMediaItemIndex,
+            visibleItemCount = player.mediaItemCount
+        ) ?: return
+
+        if (!queueWindowExtensionInProgress.compareAndSet(false, true)) return
+
+        serviceIOScope.launch {
+            try {
+                val resolvedItems = resolveMediaItemsForPlayback(extension.items)
+                if (resolvedItems.isEmpty()) return@launch
+
+                withContext(Dispatchers.Main) {
+                    if (
+                        !::player.isInitialized ||
+                        !SongHelper.isQueueWindowExtensionCurrent(extension)
+                    ) {
+                        return@withContext
+                    }
+
+                    if (extension.insertAtStart) {
+                        player.addMediaItems(0, resolvedItems)
+                    } else {
+                        player.addMediaItems(resolvedItems)
+                    }
+                    SongHelper.commitQueueWindowExtension(extension)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("MusicService", "Could not extend the playback queue window", e)
+            } finally {
+                queueWindowExtensionInProgress.set(false)
+                withContext(Dispatchers.Main) {
+                    if (::player.isInitialized) {
+                        extendPlaybackQueueWindowIfNeeded()
+                    }
+                }
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
@@ -407,6 +599,27 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 }
             }
             super.onPostConnect(session, controller)
+        }
+
+        @OptIn(UnstableApi::class)
+        override fun onAddMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: List<MediaItem>
+        ): ListenableFuture<List<MediaItem>> {
+            val resultFuture = SettableFuture.create<List<MediaItem>>()
+            serviceIOScope.launch {
+                try {
+                    resultFuture.set(resolveMediaItemsForPlayback(mediaItems))
+                } catch (e: CancellationException) {
+                    resultFuture.cancel(false)
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("MusicService", "Error resolving items added to the queue", e)
+                    resultFuture.setException(e)
+                }
+            }
+            return resultFuture
         }
 
         @OptIn(UnstableApi::class)
@@ -488,9 +701,19 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
                     // Find the starting item's index in the full tracklist
                     val startingMediaId = mediaItems.firstOrNull()?.mediaId
-                    val startingIndex = if (startingMediaId != null) {
+                    val requestedQueueIndex = mediaItems.firstOrNull()
+                        ?.mediaMetadata
+                        ?.extras
+                        ?.getInt(SongHelper.QUEUE_INDEX_EXTRA, -1)
+                        ?: -1
+                    val startingIndex = requestedQueueIndex.takeIf {
+                        it in fullTracklist.indices &&
+                            fullTracklist[it].mediaId == startingMediaId
+                    } ?: if (startingMediaId != null) {
                         fullTracklist.indexOfFirst { it.mediaId == startingMediaId }.coerceAtLeast(0)
-                    } else 0
+                    } else {
+                        0
+                    }
 
                     // Window the tracklist around the starting index (max 50 items to avoid memory issues)
                     val windowSize = 50
@@ -518,8 +741,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                                 .setUri(offlinePath)
                                 .build()
                         } else {
-                            // Use streaming URL with transcoding options
-                            val finalUri = originalItem.mediaId + bitrateOptions
+                            val finalUri = resolveOnlinePlaybackUri(originalItem, bitrateOptions)
                             MediaItem.Builder()
                                 .setMediaId(originalItem.mediaId)
                                 .setMediaMetadata(originalItem.mediaMetadata)
@@ -527,8 +749,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                                 .build()
                         }
 
-                        // Add generated artwork for Bluetooth/notifications if needed
-                        baseItem.withGeneratedArtworkIfNeeded()
+                        baseItem
                     }
 
                     Log.d("MusicService", "Resolved ${resolvedItems.size} items, startAt=$adjustedStartIndex, first: ${resolvedItems.firstOrNull()?.mediaMetadata?.title}")
@@ -581,19 +802,21 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     val items: List<MediaItem> = when {
                         parentId == "nodeHOME" -> getHomeScreenItems()
                         parentId == "nodeALBUMS" -> getAlbumItems(limit, offset)
+                        parentId == "nodeAUDIOBOOKS" -> getAudiobookItems(limit, offset)
                         parentId == "nodeARTISTS" -> getArtistItems(limit, offset)
                         parentId == "nodeFAVORITES" -> getFavoriteItems()
                         parentId == "nodeRADIOS" -> getRadioItems()
                         parentId == "nodePLAYLISTS" -> getPlaylistItems()
                         parentId.startsWith("artist_") -> {
                             val artistId = parentId.removePrefix("artist_")
-                            getArtistAlbums(artistId)
+                            getArtistAlbums(artistId, artistNamesById[artistId])
                         }
                         else -> {
                             val mediaItem =
                                 aHomeScreenItems.find { it.mediaId == parentId }
                                     ?: aPlaylistScreenItems.find { it.mediaId == parentId }
                                     ?: aAlbumScreenItems.find { it.mediaId == parentId }
+                                    ?: aAudiobookScreenItems.find { it.mediaId == parentId }
                                     ?: aFavoriteScreenItems.find { it.mediaId == parentId }
                             getFolderItems(
                                 parentId,
@@ -620,6 +843,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<MediaItem>> {
             val mediaItem = aFolderSongs.find { it.mediaId == mediaId }
                 ?: aRadioScreenItems.find { it.mediaId == mediaId }
+                ?: aAudiobookScreenItems.find { it.mediaId == mediaId }
                 ?: return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
 
             return Futures.immediateFuture(
@@ -639,8 +863,9 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             session.notifyChildrenChanged(
                 parentId,
                 when (parentId) {
-                    "nodeROOT" -> 2
+                    "nodeROOT" -> rootHierarchy.size
                     "nodeHOME" -> aHomeScreenItems.size
+                    "nodeAUDIOBOOKS" -> aAudiobookScreenItems.size
                     "nodeRADIOS" -> aRadioScreenItems.size
                     "nodePLAYLISTS" -> aPlaylistScreenItems.size
                     else -> 0
@@ -656,42 +881,23 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo
         ): ListenableFuture<MediaItemsWithStartPosition> {
             val settable = SettableFuture.create<MediaItemsWithStartPosition>()
-            serviceMainScope.launch {
+            serviceIOScope.launch {
                 try {
                     Log.d("RESUMPTION", "Getting onPlaybackResumption")
-                    // Use .first() instead of collectLatest to get only one emission
-                    // and avoid calling settable.set() multiple times (which throws IllegalStateException)
-                    val playbackResumptionList = LocalDataSettingsManager(applicationContext)
-                        .playbackResumptionPlaylistWithStartPosition.first()
-
-                    val mediaItems = playbackResumptionList.mediaItems
-                    if (mediaItems.isEmpty()) {
+                    val playbackState = loadSavedPlaybackState()
+                    if (playbackState.mediaItems.isEmpty()) {
                         Log.w("RESUMPTION", "Empty playlist, skipping resumption")
-                        // Return empty result instead of failing
                         settable.set(MediaItemsWithStartPosition(emptyList(), 0, 0L))
                         return@launch
                     }
-
-                    settable.set(playbackResumptionList)
-                    Log.d("RESUMPTION", "Got mediaitems")
-
-                    withContext(Dispatchers.Main) {
-                        player.setMediaItems(mediaItems)
-                        player.prepare()
-                        player.playWhenReady = true
-
-                        // Validate startIndex is within bounds to prevent IndexOutOfBoundsException
-                        // Use maxOf(0, size-1) to handle edge case where size-1 could be negative
-                        val safeStartIndex = playbackResumptionList.startIndex.coerceIn(0, maxOf(0, mediaItems.size - 1))
-                        player.seekTo(safeStartIndex, playbackResumptionList.startPositionMs)
-
-                        SongHelper.currentTracklist = mediaItems
-
-                        Log.d(
-                            "RESUMPTION",
-                            "Set playlist: ${mediaItems.map { it.mediaMetadata.title }} at index $safeStartIndex with position ${playbackResumptionList.startPositionMs}"
-                        )
-                    }
+                    settable.set(playbackState)
+                    Log.d(
+                        "RESUMPTION",
+                        "Returned ${playbackState.mediaItems.size} items at index " +
+                            "${playbackState.startIndex}, position ${playbackState.startPositionMs}"
+                    )
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e("RESUMPTION", "Error during playback resumption", e)
                     settable.set(MediaItemsWithStartPosition(emptyList(), 0, 0L))
@@ -803,7 +1009,14 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
 
     override fun onDestroy() {
-        saveState()
+        // Capture once more without blocking the main thread. Regular player
+        // events and the periodic checkpoint already keep this nearly current.
+        schedulePlaybackStateSave(delayMs = 0L)
+        if (::player.isInitialized) {
+            captureAudiobookSnapshot(player)?.let { snapshot ->
+                persistAudiobookSnapshot(snapshot, syncImmediately = true)
+            }
+        }
         scrobbleJob?.cancel()
         scrobbleJob = null
         // Cancel coroutine scopes to prevent memory leaks and orphaned coroutines
@@ -820,39 +1033,99 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         super.onDestroy()
     }
 
-    fun saveState() {
+    private data class PlaybackSnapshot(
+        val mediaItems: List<MediaItem>,
+        val currentIndex: Int,
+        val currentPosition: Long
+    )
+
+    private data class AudiobookPlaybackSnapshot(
+        val mediaItem: MediaItem,
+        val positionMs: Long,
+        val durationMs: Long,
+        val playbackSpeed: Float
+    )
+
+    private fun captureAudiobookSnapshot(activePlayer: Player?): AudiobookPlaybackSnapshot? {
+        if (activePlayer == null) return null
+        return try {
+            val item = activePlayer.currentMediaItem ?: return null
+            if (
+                item.mediaMetadata.extras?.getString("mediaCategory") !=
+                MediaCategory.AUDIOBOOK
+            ) {
+                return null
+            }
+            AudiobookPlaybackSnapshot(
+                mediaItem = item,
+                positionMs = activePlayer.currentPosition.coerceAtLeast(0L),
+                durationMs = activePlayer.duration.takeIf { it > 0L }
+                    ?: item.mediaMetadata.durationMs
+                    ?: 0L,
+                playbackSpeed = activePlayer.playbackParameters.speed
+            )
+        } catch (_: IllegalStateException) {
+            null
+        }
+    }
+
+    private fun persistAudiobookSnapshot(
+        snapshot: AudiobookPlaybackSnapshot,
+        syncImmediately: Boolean
+    ) {
+        playbackPersistenceScope.launch {
+            audiobookProgressRepository.savePlayback(
+                mediaItem = snapshot.mediaItem,
+                positionMs = snapshot.positionMs,
+                durationMs = snapshot.durationMs,
+                playbackSpeed = snapshot.playbackSpeed,
+                syncImmediately = syncImmediately
+            )
+        }
+    }
+
+    private fun capturePlaybackSnapshot(): PlaybackSnapshot? {
         if (!::player.isInitialized) {
-            Log.w("AA", "Cannot save state - player not initialized")
-            return
+            return null
         }
 
-        try {
-            // Capture player state on the current thread before async save
+        return try {
             val mediaItemCount = player.mediaItemCount
             val mediaItems = List(mediaItemCount) { i -> player.getMediaItemAt(i) }
-            val currentIndex = player.currentMediaItemIndex
-            val currentPosition = player.currentPosition
-
-            Log.d(
-                "AA",
-                "Saving state! Playlist: ${mediaItems.map { it.mediaMetadata.title }}, current index: $currentIndex, current position: $currentPosition"
+            PlaybackSnapshot(
+                mediaItems = mediaItems,
+                currentIndex = player.currentMediaItemIndex,
+                currentPosition = player.currentPosition
             )
-
-            // Use runBlocking with timeout to prevent ANR, but this is still called from main
-            // Note: This is acceptable in onDestroy since we need to complete before the service dies
-            runBlocking {
-                kotlinx.coroutines.withTimeout(5000L) {
-                    LocalDataSettingsManager(applicationContext).setPlaybackResumption(
-                        mediaItems,
-                        currentIndex,
-                        currentPosition
-                    )
-                }
-            }
         } catch (e: IllegalStateException) {
-            Log.e("AA", "Error saving state - player may be released", e)
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            Log.e("AA", "Timeout saving playback state", e)
+            Log.d("AA", "Player was released before state capture")
+            null
+        }
+    }
+
+    private fun schedulePlaybackStateSave(delayMs: Long = 500L) {
+        val snapshot = capturePlaybackSnapshot() ?: return
+        playbackStateSaveJob?.cancel()
+        playbackStateSaveJob = playbackPersistenceScope.launch {
+            try {
+                if (delayMs > 0L) {
+                    delay(delayMs)
+                }
+                localDataSettingsManager.setPlaybackResumption(
+                    snapshot.mediaItems,
+                    snapshot.currentIndex,
+                    snapshot.currentPosition
+                )
+                Log.d(
+                    "AA",
+                    "Saved playback state: ${snapshot.mediaItems.size} items, " +
+                        "index ${snapshot.currentIndex}, position ${snapshot.currentPosition}"
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("AA", "Could not save playback state", e)
+            }
         }
     }
 
@@ -894,9 +1167,20 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         return albums
     }
 
+    private suspend fun getAudiobookItems(limit: Int, offset: Int): List<MediaItem> {
+        Log.d("AA", "Getting audiobook items: limit=$limit, offset=$offset")
+        val books = audiobookRepository.getBooks().drop(offset).take(limit).map(AudiobookBook::album)
+        aAudiobookScreenItems.clear()
+        aAudiobookScreenItems.addAll(books)
+        return books
+    }
+
     private suspend fun getArtistItems(limit: Int, offset: Int): List<MediaItem> {
         Log.d("AA", "Getting artist items: limit=$limit, offset=$offset")
         val artists = artistRepository.getArtists("alphabeticalByName", limit, offset)
+        artists.forEach { artist ->
+            artistNamesById[artist.navidromeID] = artist.name
+        }
         aArtistScreenItems.clear()
         aArtistScreenItems.addAll(
             artists.map { artist ->
@@ -912,6 +1196,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                             .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
                             .setExtras(Bundle().apply {
                                 putString("navidromeID", artist.navidromeID)
+                                putString("artistName", artist.name)
                                 putInt("albumCount", artist.albumCount ?: 0)
                             })
                             .build()
@@ -922,9 +1207,12 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         return aArtistScreenItems
     }
 
-    private suspend fun getArtistAlbums(artistId: String): List<MediaItem> {
+    private suspend fun getArtistAlbums(
+        artistId: String,
+        artistName: String? = artistNamesById[artistId]
+    ): List<MediaItem> {
         Log.d("AA", "Getting albums for artist: $artistId")
-        return artistRepository.getArtistAlbums(artistId)
+        return artistRepository.getArtistAlbums(artistId, artistName)
     }
 
     private suspend fun getFavoriteItems(): List<MediaItem> {
@@ -965,6 +1253,9 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     if (albumSongs != null && albumSongs.size > 1) albumSongs.subList(1, albumSongs.size) else emptyList()
                 )
             }
+            MediaMetadata.MEDIA_TYPE_AUDIO_BOOK -> {
+                aFolderSongs.addAll(audiobookRepository.getBook(parentId)?.parts.orEmpty())
+            }
             MediaMetadata.MEDIA_TYPE_PLAYLIST -> {
                 aFolderSongs.addAll(playlistRepository.getPlaylistSongs(parentId))
             }
@@ -978,61 +1269,51 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
     //region Helper functions
 
-    /**
-     * Generate artwork bytes for a MediaItem if it needs generated artwork.
-     * Returns null if the item already has valid artwork or generation fails.
-     */
-    private fun generateArtworkBytesIfNeeded(mediaItem: MediaItem): ByteArray? {
-        val artworkUri = mediaItem.mediaMetadata.artworkUri?.toString()
+    private fun restoreSavedPlaybackQueue() {
+        serviceIOScope.launch {
+            try {
+                val playbackState = loadSavedPlaybackState()
+                if (playbackState.mediaItems.isEmpty()) return@launch
 
-        // Check if artwork needs to be generated
-        if (!GeneratedArtworkBitmap.needsGeneratedArt(artworkUri)) {
-            return null
-        }
+                withContext(Dispatchers.Main) {
+                    // A user action always wins if it races service startup.
+                    if (player.mediaItemCount > 0) return@withContext
 
-        return try {
-            val title = mediaItem.mediaMetadata.title?.toString() ?: "Unknown"
-            val artist = mediaItem.mediaMetadata.artist?.toString()
-            val album = mediaItem.mediaMetadata.albumTitle?.toString()
-
-            val bitmap = GeneratedArtworkBitmap.generate(
-                title = title,
-                artist = artist,
-                album = album,
-                size = 512 // Good size for Bluetooth/notifications
-            )
-
-            val outputStream = ByteArrayOutputStream()
-            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
-            val bytes = outputStream.toByteArray()
-            bitmap.recycle()
-            outputStream.close()
-            bytes
-        } catch (e: Exception) {
-            Log.e("MusicService", "Error generating artwork: ${e.message}")
-            null
+                    player.setMediaItems(
+                        playbackState.mediaItems,
+                        playbackState.startIndex,
+                        playbackState.startPositionMs
+                    )
+                    player.playWhenReady = false
+                    SongHelper.currentTracklist = playbackState.mediaItems
+                    Log.d(
+                        "RESUMPTION",
+                        "Restored paused queue: ${playbackState.mediaItems.size} items, " +
+                            "index ${playbackState.startIndex}, position ${playbackState.startPositionMs}"
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("RESUMPTION", "Could not restore saved playback queue", e)
+            }
         }
     }
 
-    /**
-     * Build a MediaItem with generated artwork if needed
-     */
-    private fun MediaItem.withGeneratedArtworkIfNeeded(): MediaItem {
-        val artworkBytes = generateArtworkBytesIfNeeded(this)
-        if (artworkBytes == null) {
-            return this // No generation needed or failed
+    private suspend fun loadSavedPlaybackState(): MediaItemsWithStartPosition {
+        val savedState = localDataSettingsManager
+            .playbackResumptionPlaylistWithStartPosition.first()
+        if (savedState.mediaItems.isEmpty()) {
+            return MediaItemsWithStartPosition(emptyList(), 0, 0L)
         }
 
-        return MediaItem.Builder()
-            .setMediaId(this.mediaId)
-            .setUri(this.localConfiguration?.uri)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .populate(this.mediaMetadata)
-                    .setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                    .build()
-            )
-            .build()
+        val resolvedItems = resolveMediaItemsForPlayback(savedState.mediaItems)
+        val safeStartIndex = savedState.startIndex.coerceIn(0, resolvedItems.lastIndex)
+        return MediaItemsWithStartPosition(
+            resolvedItems,
+            safeStartIndex,
+            savedState.startPositionMs.coerceAtLeast(0L)
+        )
     }
 
     private fun MediaItem.withGroupTitle(title: String): MediaItem {
@@ -1088,12 +1369,42 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 MediaItem.Builder()
                     .setMediaId(mediaItem.mediaId)
                     .setMediaMetadata(mediaItem.mediaMetadata)
-                    .setUri(mediaItem.mediaId + bitrateOptions)
+                    .setUri(resolveOnlinePlaybackUri(mediaItem, bitrateOptions))
                     .build()
             }
 
-            // Add generated artwork for Bluetooth/notifications if needed
-            baseItem.withGeneratedArtworkIfNeeded()
+            baseItem
+        }
+    }
+
+    private fun resolveOnlinePlaybackUri(
+        mediaItem: MediaItem,
+        bitrateOptions: String
+    ): String {
+        val extras = mediaItem.mediaMetadata.extras
+        val songId = extras?.getString("navidromeID")
+        val isRadio = mediaItem.mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION ||
+            extras?.getBoolean("isRadio") == true
+        val isRemoteSong = !songId.isNullOrBlank() &&
+            !songId.startsWith("Local_") &&
+            !isRadio
+        val server = NavidromeManager.getCurrentServer()
+
+        if (!isRemoteSong || server == null) {
+            return mediaItem.mediaId
+        }
+
+        return try {
+            buildNavidromeStreamUrl(
+                serverUrl = server.url,
+                username = server.username,
+                password = server.password,
+                songId = songId,
+                bitrateOptions = bitrateOptions
+            )
+        } catch (e: IllegalArgumentException) {
+            Log.w("MusicService", "Cannot build Navidrome stream URL: ${e.message}")
+            ""
         }
     }
 

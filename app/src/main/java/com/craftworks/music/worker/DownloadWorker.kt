@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Environment
+import android.system.ErrnoException
+import android.system.Os
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -23,22 +25,73 @@ import com.craftworks.music.data.database.dao.DownloadDao
 import com.craftworks.music.data.database.dao.OfflineSongDao
 import com.craftworks.music.data.database.entity.DownloadStatus
 import com.craftworks.music.data.database.entity.OfflineSongEntity
+import com.craftworks.music.data.requireUsableNavidromeServerUrl
 import com.craftworks.music.managers.NavidromeManager
 import com.craftworks.music.providers.navidrome.generateSalt
 import com.craftworks.music.providers.navidrome.md5Hash
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.EOFException
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.text.Normalizer
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import androidx.room.withTransaction
 import com.craftworks.music.data.database.ChoraDatabase
+
+private val SAFE_EXTENSION = Regex("^[a-z0-9]{1,10}$")
+private val UNSAFE_FILE_CHARACTERS = Regex("[^\\p{L}\\p{N} _-]")
+private val REPEATED_WHITESPACE = Regex("\\s+")
+
+internal fun buildDownloadFileName(
+    title: String,
+    artist: String,
+    format: String,
+    mediaId: String
+): String {
+    val safeTitle = sanitizeFileComponent(title, "Untitled", 64)
+    val safeArtist = sanitizeFileComponent(artist, "Unknown Artist", 48)
+    val extensionCandidate = format.trim().removePrefix(".").lowercase(Locale.ROOT)
+    val extension = extensionCandidate.takeIf(SAFE_EXTENSION::matches) ?: "audio"
+    val mediaSuffix = stableMediaSuffix(mediaId)
+    return "$safeTitle - $safeArtist [$mediaSuffix].$extension"
+}
+
+private fun sanitizeFileComponent(value: String, fallback: String, maxLength: Int): String {
+    val normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
+        .replace(UNSAFE_FILE_CHARACTERS, "")
+        .replace(REPEATED_WHITESPACE, " ")
+        .trim(' ', '.', '-', '_')
+        .take(maxLength)
+        .trimEnd()
+    return normalized.ifBlank { fallback }
+}
+
+private fun stableMediaSuffix(mediaId: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(mediaId.toByteArray(StandardCharsets.UTF_8))
+    val hex = "0123456789abcdef"
+    return buildString(12) {
+        repeat(6) { index ->
+            val value = digest[index].toInt() and 0xff
+            append(hex[value ushr 4])
+            append(hex[value and 0x0f])
+        }
+    }
+}
 
 @HiltWorker
 class DownloadWorker @AssistedInject constructor(
@@ -62,6 +115,8 @@ class DownloadWorker @AssistedInject constructor(
         const val KEY_TOTAL_BYTES = "total_bytes"
 
         private const val CHANNEL_ID = "download_channel"
+        private const val UNKNOWN_LENGTH_REPORT_INTERVAL_BYTES = 256L * 1024L
+        private const val DOWNLOAD_READ_TIMEOUT_MS = 5 * 60 * 1000
         private val notificationCounter = AtomicInteger(2000)
     }
 
@@ -82,7 +137,7 @@ class DownloadWorker @AssistedInject constructor(
         downloadDao.updateStatus(downloadId, DownloadStatus.DOWNLOADING)
 
         // Set foreground with notification
-        setForeground(createForegroundInfo(title, artist, 0))
+        setForeground(createForegroundInfo(title, artist, null))
 
         return try {
             val localPath = downloadFile(downloadId, mediaId, title, artist, format)
@@ -99,13 +154,26 @@ class DownloadWorker @AssistedInject constructor(
                 isAvailable = true
             )
 
+            currentCoroutineContext().ensureActive()
             database.withTransaction {
-                downloadDao.markCompleted(downloadId, System.currentTimeMillis(), localPath)
+                val markedCompleted = downloadDao.markCompleted(
+                    downloadId,
+                    System.currentTimeMillis(),
+                    localPath,
+                    file.length()
+                )
+                if (markedCompleted != 1) {
+                    throw CancellationException("Download is no longer active")
+                }
                 offlineSongDao.insert(offlineSong)
             }
 
             Log.d("DownloadWorker", "Download completed: $localPath")
             Result.success()
+
+        } catch (e: CancellationException) {
+            Log.d("DownloadWorker", "Download stopped")
+            throw e
 
         } catch (e: java.net.SocketTimeoutException) {
             Log.e("DownloadWorker", "Network timeout: ${e.message}", e)
@@ -154,6 +222,7 @@ class DownloadWorker @AssistedInject constructor(
     ): String = withContext(Dispatchers.IO) {
         val server = NavidromeManager.getCurrentServer()
             ?: throw IllegalStateException("No server configured")
+        val serverUrl = requireUsableNavidromeServerUrl(server.url)
 
         val passwordSalt = generateSalt(8)
         val passwordHash = md5Hash(server.password + passwordSalt)
@@ -164,9 +233,9 @@ class DownloadWorker @AssistedInject constructor(
         val encodedHash = URLEncoder.encode(passwordHash, "UTF-8")
         val encodedSalt = URLEncoder.encode(passwordSalt, "UTF-8")
 
-        val downloadUrl = "${server.url}/rest/download.view?id=$encodedMediaId&u=$encodedUsername&t=$encodedHash&s=$encodedSalt&v=1.16.1&c=Chora"
+        val downloadUrl = "$serverUrl/rest/download.view?id=$encodedMediaId&u=$encodedUsername&t=$encodedHash&s=$encodedSalt&v=1.16.1&c=Chora"
 
-        Log.d("DownloadWorker", "Downloading from: ${server.url}/rest/download.view?id=$encodedMediaId")
+        Log.d("DownloadWorker", "Downloading from: $serverUrl/rest/download.view?id=$encodedMediaId")
 
         // Use app-specific external storage (no permissions needed on Android 10+)
         val musicDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
@@ -176,33 +245,55 @@ class DownloadWorker @AssistedInject constructor(
             musicDir.mkdirs()
         }
 
-        // Sanitize filename
-        val sanitizedTitle = title.replace(Regex("[^a-zA-Z0-9\\s\\-_]"), "").trim()
-        val sanitizedArtist = artist.replace(Regex("[^a-zA-Z0-9\\s\\-_]"), "").trim()
-        val fileName = "$sanitizedTitle - $sanitizedArtist.$format"
+        val fileName = buildDownloadFileName(title, artist, format, mediaId)
         val outputFile = File(musicDir, fileName)
 
-        // Use temp file for atomic writes - prevents partial corrupt files
-        val tempFile = File(musicDir, "$fileName.tmp")
+        // Each worker owns its temp file, so a resumed replacement cannot race
+        // or delete the partial file of a worker that is still winding down.
+        val tempFile = File(musicDir, ".$fileName.${workerParams.id}.tmp")
 
         val url = URL(downloadUrl)
         val connection = url.openConnection() as HttpURLConnection
 
         try {
             connection.connectTimeout = 30000
-            connection.readTimeout = 30000
+            // Large local-library files can pause while the server or disk catches up.
+            // Keep a finite timeout so dead transfers still retry, but do not kill a
+            // healthy audiobook download after a brief 30-second gap.
+            connection.readTimeout = DOWNLOAD_READ_TIMEOUT_MS
             connection.connect()
 
-            val totalBytes = connection.contentLength.toLong()
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                throw IOException("Server returned HTTP $responseCode")
+            }
+
+            val contentType = connection.contentType.orEmpty().lowercase(Locale.ROOT)
+            if (
+                contentType.startsWith("text/") ||
+                "json" in contentType ||
+                "xml" in contentType
+            ) {
+                throw IOException("Server returned $contentType instead of audio")
+            }
+
+            val totalBytes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                connection.contentLengthLong
+            } else {
+                connection.contentLength.toLong()
+            }
+            downloadDao.updateProgress(downloadId, 0f, 0L, totalBytes.coerceAtLeast(0L))
 
             connection.inputStream.use { inputStream ->
                 FileOutputStream(tempFile).use { outputStream ->
                     val buffer = ByteArray(8192)
                     var bytesRead: Int
                     var totalBytesRead = 0L
-                    var lastReportedProgress = -1  // Track last reported percentage
+                    var lastReportedProgress = -1
+                    var lastReportedBytes = 0L
 
                     while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        currentCoroutineContext().ensureActive()
                         outputStream.write(buffer, 0, bytesRead)
                         totalBytesRead += bytesRead
 
@@ -214,16 +305,35 @@ class DownloadWorker @AssistedInject constructor(
                         }
 
                         val currentPercentage = (progress * 100).toInt()
+                        val shouldReport = if (totalBytes > 0) {
+                            lastReportedProgress < 0 ||
+                                currentPercentage >= lastReportedProgress + 2 ||
+                                currentPercentage == 100
+                        } else {
+                            lastReportedBytes == 0L ||
+                                totalBytesRead - lastReportedBytes >= UNKNOWN_LENGTH_REPORT_INTERVAL_BYTES
+                        }
 
-                        // Throttle updates: only update DB every 2% change
-                        if (currentPercentage >= lastReportedProgress + 2 || currentPercentage == 100) {
+                        if (shouldReport) {
                             lastReportedProgress = currentPercentage
+                            lastReportedBytes = totalBytesRead
 
                             // Update database
-                            downloadDao.updateProgress(downloadId, DownloadStatus.DOWNLOADING, progress, totalBytesRead)
+                            downloadDao.updateProgress(
+                                downloadId,
+                                progress,
+                                totalBytesRead,
+                                totalBytes.coerceAtLeast(0L)
+                            )
 
                             // Update notification
-                            setForeground(createForegroundInfo(title, artist, currentPercentage))
+                            setForeground(
+                                createForegroundInfo(
+                                    title,
+                                    artist,
+                                    currentPercentage.takeIf { totalBytes > 0 }
+                                )
+                            )
 
                             // Set progress for observers
                             setProgress(workDataOf(
@@ -233,21 +343,40 @@ class DownloadWorker @AssistedInject constructor(
                             ))
                         }
                     }
+
+                    if (totalBytesRead == 0L) {
+                        throw EOFException("Server returned an empty download")
+                    }
+                    if (totalBytes > 0L && totalBytesRead != totalBytes) {
+                        throw EOFException("Download ended before all bytes were received")
+                    }
+
+                    val finalSize = if (totalBytes > 0L) totalBytes else totalBytesRead
+                    downloadDao.updateProgress(downloadId, 1f, totalBytesRead, finalSize)
+                    setProgress(
+                        workDataOf(
+                            KEY_PROGRESS to 1f,
+                            KEY_BYTES_DOWNLOADED to totalBytesRead,
+                            KEY_TOTAL_BYTES to finalSize
+                        )
+                    )
                 }
             }
 
-            // Atomic rename: only after successful download
-            if (!tempFile.renameTo(outputFile)) {
-                // Fallback: copy and delete if rename fails (cross-filesystem)
-                tempFile.copyTo(outputFile, overwrite = true)
-                tempFile.delete()
+            currentCoroutineContext().ensureActive()
+            try {
+                // Both files are in the same app directory, so this atomically
+                // replaces any older copy without exposing a partial download.
+                Os.rename(tempFile.absolutePath, outputFile.absolutePath)
+            } catch (e: ErrnoException) {
+                throw IOException("Could not finalize downloaded audio", e)
             }
 
             outputFile.absolutePath
         } catch (e: Exception) {
-            // Clean up partial/temp file on failure
+            // This worker owns only its uniquely named temp file. Never delete
+            // the final path here because a replacement worker may own it.
             tempFile.delete()
-            outputFile.delete()
             throw e
         } finally {
             // Always disconnect the connection
@@ -256,7 +385,11 @@ class DownloadWorker @AssistedInject constructor(
     }
 
     @androidx.annotation.OptIn(UnstableApi::class)
-    private fun createForegroundInfo(title: String, artist: String, progress: Int): ForegroundInfo {
+    private fun createForegroundInfo(
+        title: String,
+        artist: String,
+        progressPercent: Int?
+    ): ForegroundInfo {
         createNotificationChannel(
             context,
             CHANNEL_ID,
@@ -272,7 +405,7 @@ class DownloadWorker @AssistedInject constructor(
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setProgress(100, progress, progress == 0)
+            .setProgress(100, progressPercent ?: 0, progressPercent == null)
             .build()
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

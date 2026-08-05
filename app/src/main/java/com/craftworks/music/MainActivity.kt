@@ -1,11 +1,9 @@
 package com.craftworks.music
 
 import android.app.Activity
-import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -29,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -91,8 +90,11 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.craftworks.music.data.BottomNavItem
+import com.craftworks.music.data.defaultBottomNavItems
 import com.craftworks.music.data.model.Screen
+import com.craftworks.music.data.repository.SyncPhase
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.managers.settings.InterfaceMode
 import com.craftworks.music.managers.settings.OnboardingSettingsManager
 import com.craftworks.music.player.ChoraMediaLibraryService
 import com.craftworks.music.player.rememberManagedMediaController
@@ -102,6 +104,8 @@ import com.craftworks.music.ui.elements.dialogs.NoMediaProvidersDialog
 import com.craftworks.music.ui.playing.NowPlayingContent
 import com.craftworks.music.ui.playing.NowPlayingMiniPlayer
 import com.craftworks.music.ui.playing.dpToPx
+import com.craftworks.music.player.NowPlayingOpenRequest
+import com.craftworks.music.ui.ipod.IpodTouchApp
 import com.craftworks.music.ui.theme.MusicPlayerTheme
 import com.gigamole.composefadingedges.FadingEdgesGravity
 import com.gigamole.composefadingedges.content.FadingEdgesContentType
@@ -140,8 +144,6 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     lateinit var navController: NavHostController
-    private var activityLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
-    private lateinit var serviceIntent: Intent
     private lateinit var batteryOptimizationLauncher: ActivityResultLauncher<Intent>
 
     @androidx.annotation.OptIn(UnstableApi::class)
@@ -149,8 +151,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        serviceIntent = Intent(applicationContext, ChoraMediaLibraryService::class.java)
-        this@MainActivity.startService(serviceIntent)
+        startService(Intent(applicationContext, ChoraMediaLibraryService::class.java))
 
         // Battery optimization request launcher
         batteryOptimizationLauncher = registerForActivityResult(
@@ -187,6 +188,26 @@ class MainActivity : ComponentActivity() {
                 val showOnboarding by onboardingSettingsManager.shouldShowOnboardingFlow.collectAsState(initial = false)
 
                 val mediaController by rememberManagedMediaController()
+                val appearanceSettingsManager = remember {
+                    AppearanceSettingsManager(this@MainActivity.applicationContext)
+                }
+                val interfaceMode by appearanceSettingsManager.interfaceModeFlow.collectAsStateWithLifecycle(
+                    initialValue = InterfaceMode.CHORA
+                )
+                val modeScope = rememberCoroutineScope()
+                var pendingChoraRoute by remember { mutableStateOf<String?>(null) }
+
+                if (!showOnboarding && interfaceMode == InterfaceMode.IPOD_TOUCH) {
+                    IpodTouchApp(
+                        mediaController = mediaController,
+                        onOpenChoraRoute = { route ->
+                            pendingChoraRoute = route
+                            modeScope.launch {
+                                appearanceSettingsManager.setInterfaceMode(InterfaceMode.CHORA)
+                            }
+                        }
+                    )
+                } else {
                 var metadata by remember { mutableStateOf<MediaMetadata?>(null) }
 
                 // Download Manager
@@ -197,6 +218,18 @@ class MainActivity : ComponentActivity() {
                 val syncIndicatorViewModel: SyncIndicatorViewModel = hiltViewModel()
                 val isSyncing by syncIndicatorViewModel.isSyncing.collectAsStateWithLifecycle()
                 val isPaused by syncIndicatorViewModel.isPaused.collectAsStateWithLifecycle()
+                val syncState by syncIndicatorViewModel.syncState.collectAsStateWithLifecycle()
+                val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+
+                LaunchedEffect(interfaceMode, pendingChoraRoute, showOnboarding) {
+                    val route = pendingChoraRoute
+                    if (!showOnboarding && interfaceMode == InterfaceMode.CHORA && route != null) {
+                        navController.navigate(route) {
+                            launchSingleTop = true
+                        }
+                        pendingChoraRoute = null
+                    }
+                }
 
                 // Battery Optimization
                 val batteryManager = remember { BatteryOptimizationManager(this@MainActivity) }
@@ -260,6 +293,18 @@ class MainActivity : ComponentActivity() {
                             positionalThreshold = { velocityThreshold }
                         ), snackbarHostState = SnackbarHostState()
                     )
+                }
+                LaunchedEffect(useBottomSheet, showOnboarding) {
+                    if (showOnboarding) return@LaunchedEffect
+                    NowPlayingOpenRequest.requests.collect {
+                        if (useBottomSheet) {
+                            scaffoldState.bottomSheetState.expand()
+                        } else {
+                            navController.navigate(Screen.NowPlayingLandscape.route) {
+                                launchSingleTop = true
+                            }
+                        }
+                    }
                 }
                 val peekHeight by animateDpAsState(
                     targetValue = if (metadata?.title != null) 72.dp else 0.dp,
@@ -425,22 +470,27 @@ class MainActivity : ComponentActivity() {
 
                 // Floating Indicators - hide during onboarding
                 if (!showOnboarding) {
-                    // Sync Indicator - top center
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.TopCenter
-                    ) {
-                        FloatingSyncIndicator(
-                            isSyncing = isSyncing || isPaused,
-                            onClick = {
-                                navController.navigate(Screen.S_Data.route) {
-                                    launchSingleTop = true
-                                }
-                            },
-                            modifier = Modifier
-                                .statusBarsPadding()
-                                .padding(top = 16.dp)
-                        )
+                    // The Data screen already has the full sync card, so avoid
+                    // showing a duplicate floating status there.
+                    if (currentRoute != Screen.S_Data.route) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.BottomCenter
+                        ) {
+                            FloatingSyncIndicator(
+                                isVisible = isSyncing || isPaused || syncState.phase == SyncPhase.ERROR,
+                                isPaused = isPaused,
+                                syncState = syncState,
+                                onClick = {
+                                    navController.navigate(Screen.S_Data.route) {
+                                        launchSingleTop = true
+                                    }
+                                },
+                                modifier = Modifier
+                                    .navigationBarsPadding()
+                                    .padding(bottom = if (metadata == null) 88.dp else 160.dp)
+                            )
+                        }
                     }
 
                     // Download Indicator - top end (offset from sync)
@@ -453,7 +503,7 @@ class MainActivity : ComponentActivity() {
                             onClick = { showDownloadModal = true },
                             modifier = Modifier
                                 .statusBarsPadding()
-                                .padding(top = 16.dp, end = 16.dp)
+                                .padding(top = 72.dp, end = 12.dp)
                         )
                     }
                 }
@@ -473,66 +523,11 @@ class MainActivity : ComponentActivity() {
                         onClearCompleted = downloadViewModel::clearCompleted
                     )
                 }
-            }
-            }
-        }
-
-        val requestPermissionLauncher = registerForActivityResult(
-            ActivityResultContracts.RequestMultiplePermissions()
-        ) { permissions ->
-            permissions.entries.forEach { permission ->
-                Log.d(
-                    "PERMISSIONS", "Is '${permission.key}' permission granted? ${permission.value}"
-                )
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requestPermissionLauncher.launch(
-                arrayOf(
-                    android.Manifest.permission.READ_MEDIA_AUDIO,
-                    android.Manifest.permission.POST_NOTIFICATIONS
-                )
-            )
-        } else {
-            requestPermissionLauncher.launch(
-                arrayOf(
-                    android.Manifest.permission.READ_EXTERNAL_STORAGE
-                )
-            )
-        }
-
-        // SAVE SETTINGS ON APP EXIT
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            activityLifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
-                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) { }
-                override fun onActivityStarted(activity: Activity) { }
-                override fun onActivityResumed(activity: Activity) { }
-                override fun onActivityPaused(activity: Activity) { }
-                override fun onActivityPreStopped(activity: Activity) { }
-                override fun onActivityStopped(activity: Activity) { }
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) { }
-
-                @androidx.annotation.OptIn(UnstableApi::class)
-                override fun onActivityDestroyed(activity: Activity) {
-                    if (activity === this@MainActivity) {
-                        ChoraMediaLibraryService.getInstance()?.saveState()
-                        this@MainActivity.stopService(serviceIntent)
-                        println("Destroyed, Goodbye :(")
-                    }
                 }
             }
-            activityLifecycleCallbacks?.let { registerActivityLifecycleCallbacks(it) }
+            }
         }
-    }
 
-    override fun onDestroy() {
-        // Unregister lifecycle callbacks to prevent memory leak
-        activityLifecycleCallbacks?.let {
-            unregisterActivityLifecycleCallbacks(it)
-            activityLifecycleCallbacks = null
-        }
-        super.onDestroy()
     }
 }
 
@@ -547,21 +542,7 @@ fun AnimatedBottomNavBar(
     val context = LocalContext.current
 
     val orderedNavItems = AppearanceSettingsManager(context).bottomNavItemsFlow.collectAsState(
-        initial = listOf(
-            BottomNavItem(
-                "Home", R.drawable.rounded_home_24, "home_screen"
-            ), BottomNavItem(
-                "Albums", R.drawable.rounded_library_music_24, "album_screen"
-            ), BottomNavItem(
-                "Songs", R.drawable.round_music_note_24, "songs_screen"
-            ), BottomNavItem(
-                "Artists", R.drawable.rounded_artist_24, "artists_screen"
-            ), BottomNavItem(
-                "Radios", R.drawable.rounded_radio, "radio_screen"
-            ), BottomNavItem(
-                "Playlists", R.drawable.placeholder, "playlist_screen"
-            )
-        )
+        initial = defaultBottomNavItems()
     ).value
 
     if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT) {
@@ -596,7 +577,13 @@ fun AnimatedBottomNavBar(
                             if (scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded) scaffoldState.bottomSheetState.partialExpand()
                         }
                     },
-                    label = { Text(text = item.title) },
+                    label = {
+                        Text(
+                            text = item.title,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    },
                     alwaysShowLabel = false,
                     icon = {
                         Icon(ImageVector.vectorResource(item.icon), contentDescription = item.title)
@@ -629,7 +616,13 @@ fun AnimatedBottomNavBar(
                                 if (scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded) scaffoldState.bottomSheetState.partialExpand()
                             }
                         },
-                        label = { Text(text = item.title) },
+                        label = {
+                            Text(
+                                text = item.title,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        },
                         alwaysShowLabel = false,
                         icon = {
                             Icon(ImageVector.vectorResource(item.icon), contentDescription = item.title)

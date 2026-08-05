@@ -29,10 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -45,8 +42,6 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.SubcomposeAsyncImage
-import coil.request.ImageRequest
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.ui.util.TextDisplayUtils
 
@@ -78,15 +73,8 @@ fun NowPlayingMiniPlayer(
             .zIndex(1f)
             .clip(RoundedCornerShape(12.dp, 12.dp, 0.dp, 0.dp))
             .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
     ) {
-        // Blurred frosted glass background layer
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .blur(radius = 20.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.2f))
-        )
-
         // Content layer
         Column {
             Row(
@@ -97,16 +85,10 @@ fun NowPlayingMiniPlayer(
                     .clickable { onClick.invoke() }
             ) {
                 // Album Image
-                SubcomposeAsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(metadata?.artworkUri)
-                        .diskCacheKey(metadata?.extras?.getString("navidromeID"))
-                        .memoryCacheKey(metadata?.extras?.getString("navidromeID"))
-                        .crossfade(true)
-                        .build(),
+                NowPlayingArtwork(
+                    metadata = metadata,
+                    targetSize = 512,
                     contentDescription = "Album Cover",
-                    contentScale = ContentScale.FillWidth,
-                    alignment = Alignment.Center,
                     modifier = Modifier
                         .padding(start = 8.dp)
                         .size(48.dp)

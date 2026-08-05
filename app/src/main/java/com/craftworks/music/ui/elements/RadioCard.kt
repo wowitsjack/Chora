@@ -59,7 +59,7 @@ fun RadioCard(
                 .size(with(LocalDensity.current) { 256.dp.toPx().toInt() })
                 .crossfade(true).build(),
             fallback = painterResource(R.drawable.placeholder),
-            contentScale = ContentScale.FillWidth,
+            contentScale = ContentScale.Crop,
             contentDescription = "Album Image",
             modifier = Modifier
                 .fillMaxSize()

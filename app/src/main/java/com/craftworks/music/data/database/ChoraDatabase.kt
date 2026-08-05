@@ -6,6 +6,7 @@ import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import com.craftworks.music.data.database.dao.AlbumDao
 import com.craftworks.music.data.database.dao.AlbumPaletteDao
+import com.craftworks.music.data.database.dao.AudiobookProgressDao
 import com.craftworks.music.data.database.dao.ArtistDao
 import com.craftworks.music.data.database.dao.DownloadDao
 import com.craftworks.music.data.database.dao.OfflineSongDao
@@ -13,6 +14,7 @@ import com.craftworks.music.data.database.dao.SongDao
 import com.craftworks.music.data.database.dao.SyncMetadataDao
 import com.craftworks.music.data.database.entity.AlbumEntity
 import com.craftworks.music.data.database.entity.AlbumPaletteEntity
+import com.craftworks.music.data.database.entity.AudiobookProgressEntity
 import com.craftworks.music.data.database.entity.ArtistEntity
 import com.craftworks.music.data.database.entity.DownloadEntity
 import com.craftworks.music.data.database.entity.DownloadStatus
@@ -57,9 +59,10 @@ class Converters {
         SyncMetadata::class,
         DownloadEntity::class,
         OfflineSongEntity::class,
-        AlbumPaletteEntity::class
+        AlbumPaletteEntity::class,
+        AudiobookProgressEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -71,6 +74,7 @@ abstract class ChoraDatabase : RoomDatabase() {
     abstract fun downloadDao(): DownloadDao
     abstract fun offlineSongDao(): OfflineSongDao
     abstract fun albumPaletteDao(): AlbumPaletteDao
+    abstract fun audiobookProgressDao(): AudiobookProgressDao
 
     companion object {
         const val DATABASE_NAME = "chora_database"

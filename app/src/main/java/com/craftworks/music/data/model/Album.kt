@@ -15,6 +15,7 @@ import java.util.Collections
 val albumList: MutableList<MediaData.Album> = Collections.synchronizedList(mutableListOf())
 
 fun MediaData.Album.toMediaItem(): MediaItem {
+    val resolvedCategory = MediaCategory.resolve(explicit = mediaCategory)
     val mediaMetadata = MediaMetadata.Builder()
         .setTitle(this@toMediaItem.name)
         .setArtist(this@toMediaItem.artist)
@@ -27,11 +28,20 @@ fun MediaData.Album.toMediaItem(): MediaItem {
         .setIsBrowsable(true)
         .setIsPlayable(false)
         .setGenre(this@toMediaItem.genres?.joinToString() { it.name ?: "" })
-        .setMediaType(MediaMetadata.MEDIA_TYPE_ALBUM)
+        .setMediaType(
+            if (resolvedCategory == MediaCategory.AUDIOBOOK) {
+                MediaMetadata.MEDIA_TYPE_AUDIO_BOOK
+            } else {
+                MediaMetadata.MEDIA_TYPE_ALBUM
+            }
+        )
         .setExtras(
             Bundle().apply {
                 putString("navidromeID", this@toMediaItem.navidromeID)
+                putString("artistId", this@toMediaItem.artistId)
                 putString("starred", this@toMediaItem.starred)
+                putString("mediaCategory", resolvedCategory)
+                this@toMediaItem.musicFolderId?.let { putInt("musicFolderId", it) }
             }
         )
         .build()
@@ -60,6 +70,9 @@ fun MediaItem.toAlbum(): MediaData.Album {
         duration = extras?.getInt("Duration") ?: 0,
         songs = mutableListOf(),
         songCount = 0,
-        artistId = ""
+        artistId = extras?.getString("artistId"),
+        musicFolderId = extras?.takeIf { it.containsKey("musicFolderId") }
+            ?.getInt("musicFolderId"),
+        mediaCategory = extras?.getString("mediaCategory")
     )
 }

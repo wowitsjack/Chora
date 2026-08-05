@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.compose.runtime.mutableStateOf
 import com.craftworks.music.data.NavidromeProvider
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
-import com.craftworks.music.managers.NavidromeManager
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -14,10 +13,13 @@ import kotlinx.serialization.json.jsonObject
 
 var navidromeStatus = mutableStateOf("")
 
-suspend fun getNavidromeStatus(server: NavidromeProvider, context: Context){
-    NavidromeManager.addServer(server)
-    NavidromeDataSource(context).pingNavidromeServer()
-    NavidromeManager.removeServer(server.id)
+suspend fun getNavidromeStatus(server: NavidromeProvider, context: Context): String {
+    navidromeStatus.value = ""
+    NavidromeDataSource(context).pingNavidromeServer(server)
+    if (navidromeStatus.value.isEmpty()) {
+        navidromeStatus.value = "Connection failed"
+    }
+    return navidromeStatus.value
 }
 
 @Serializable
