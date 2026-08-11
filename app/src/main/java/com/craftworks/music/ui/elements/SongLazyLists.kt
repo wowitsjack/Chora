@@ -1,6 +1,5 @@
 package com.craftworks.music.ui.elements
 
-import android.os.Bundle
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
@@ -57,7 +56,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
@@ -65,6 +63,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
 import com.craftworks.music.R
 import com.craftworks.music.data.model.MediaData
+import com.craftworks.music.data.model.favoritesPlaylistMediaItem
 import com.craftworks.music.data.model.albumList
 import com.craftworks.music.data.model.songsList
 import com.craftworks.music.data.model.toAlbum
@@ -91,20 +90,23 @@ fun SongsHorizontalColumn(
     onDownload: ((MediaItem) -> Unit)? = null,
     onInstantMix: (suspend (MediaItem) -> List<MediaItem>)? = null,
     // Performance: Accept offline song IDs set from parent
-    offlineSongIds: Set<String> = emptySet()
+    offlineSongIds: Set<String> = emptySet(),
+    showEmptyState: Boolean = true
 ){
     if (songList.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = stringResource(R.string.Songs_Empty),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            )
+        if (showEmptyState) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.Songs_Empty),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
         }
         return
     }
@@ -388,20 +390,25 @@ fun AlbumGrid(
     onAlbumSelected: (album: MediaData.Album) -> Unit,
     isSearch: Boolean? = false,
     viewModel: AlbumScreenViewModel = viewModel(),
-    gridColumns: Int = 0
+    gridColumns: Int = 0,
+    onStartRadio: ((MediaItem) -> Unit)? = null,
+    showAlphabetScroller: Boolean = true,
+    showEmptyState: Boolean = true
 ){
     if (albums.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = stringResource(R.string.Albums_Empty),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            )
+        if (showEmptyState) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.Albums_Empty),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
         }
         return
     }
@@ -422,12 +429,12 @@ fun AlbumGrid(
             modifier = Modifier
                 .wrapContentWidth()
                 .fillMaxHeight()
-                .padding(end = 28.dp)
+                .padding(end = if (showAlphabetScroller) 28.dp else 0.dp)
                 .drawVerticalScrollbar(gridState, color = M3Theme.colorScheme.onSurface),
             state = gridState,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (showDividers && groupedAlbums.size > 1) {
+            if (showDividers && groupedAlbums.size > 1 && !showAlphabetScroller) {
                 groupedAlbums.forEach { (groupName, albumsInGroup) ->
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Column (Modifier.padding(start = 12.dp)) {
@@ -470,7 +477,8 @@ fun AlbumGrid(
                                             mediaController = mediaController
                                         )
                                 }
-                            }
+                            },
+                            onStartRadio = onStartRadio
                         )
                     }
                 }
@@ -494,19 +502,24 @@ fun AlbumGrid(
                                         mediaController = mediaController
                                     )
                             }
-                        }
+                        },
+                        onStartRadio = onStartRadio
                     )
                 }
             }
         }
 
-        // iPod-style A-Z fast scroller
-        AlphabetFastScroller(
-            items = albums,
-            getSectionLetter = { it.mediaMetadata.title?.firstOrNull() ?: '#' },
-            gridState = gridState,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
+        if (showAlphabetScroller) {
+            AlphabetFastScroller(
+                items = albums,
+                getSectionLetter = {
+                    (it.mediaMetadata.albumTitle ?: it.mediaMetadata.title)
+                        ?.firstOrNull() ?: '#'
+                },
+                gridState = gridState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
     }
 }
 
@@ -517,20 +530,25 @@ fun AlbumGrid(
     mediaController: MediaController?,
     onAlbumSelected: (album: MediaData.Album) -> Unit,
     onGetAlbum: suspend (albumID: String) -> List<MediaItem>,
-    gridColumns: Int = 0
+    gridColumns: Int = 0,
+    onStartRadio: ((MediaItem) -> Unit)? = null,
+    showAlphabetScroller: Boolean = true,
+    showEmptyState: Boolean = true
 ) {
     if (albums.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = stringResource(R.string.Albums_Empty),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            )
+        if (showEmptyState) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.Albums_Empty),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
         }
         return
     }
@@ -551,11 +569,11 @@ fun AlbumGrid(
             modifier = Modifier
                 .wrapContentWidth()
                 .fillMaxHeight()
-                .padding(end = 28.dp)
+                .padding(end = if (showAlphabetScroller) 28.dp else 0.dp)
                 .drawVerticalScrollbar(gridState, color = M3Theme.colorScheme.onSurface),
             state = gridState
         ) {
-            if (showDividers && groupedAlbums.size > 1) {
+            if (showDividers && groupedAlbums.size > 1 && !showAlphabetScroller) {
                 groupedAlbums.forEach { (groupName, albumsInGroup) ->
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Column (Modifier.padding(start = 12.dp)) {
@@ -598,7 +616,8 @@ fun AlbumGrid(
                                             mediaController = mediaController
                                         )
                                 }
-                            }
+                            },
+                            onStartRadio = onStartRadio
                         )
                     }
                 }
@@ -622,19 +641,24 @@ fun AlbumGrid(
                                         mediaController = mediaController
                                     )
                             }
-                        }
+                        },
+                        onStartRadio = onStartRadio
                     )
                 }
             }
         }
 
-        // iPod-style A-Z fast scroller
-        AlphabetFastScroller(
-            items = albums,
-            getSectionLetter = { it.mediaMetadata.title?.firstOrNull() ?: '#' },
-            gridState = gridState,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
+        if (showAlphabetScroller) {
+            AlphabetFastScroller(
+                items = albums,
+                getSectionLetter = {
+                    (it.mediaMetadata.albumTitle ?: it.mediaMetadata.title)
+                        ?.firstOrNull() ?: '#'
+                },
+                gridState = gridState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
     }
 }
 
@@ -644,6 +668,7 @@ fun AlbumRow(
     albums: List<MediaItem>,
     onAlbumSelected: (album: MediaData.Album) -> Unit,
     onPlay: (album: MediaItem) -> Unit,
+    onStartRadio: ((MediaItem) -> Unit)? = null,
     cardWidth: Int = 128
 ){
     val cardHeight = (cardWidth * 1.34f).toInt()
@@ -711,6 +736,7 @@ fun AlbumRow(
                 onPlay = {
                     onPlay(album)
                 },
+                onStartRadio = onStartRadio,
                 modifier = Modifier.animateItem(),
                 cardWidth = cardWidth
             )
@@ -724,20 +750,25 @@ fun AlbumRow(
 @Composable
 fun ArtistsGrid(
     artists: List<MediaData.Artist>,
-    onArtistSelected: (artist: MediaData.Artist) -> Unit
+    onArtistSelected: (artist: MediaData.Artist) -> Unit,
+    onStartRadio: ((MediaData.Artist) -> Unit)? = null,
+    showAlphabetScroller: Boolean = true,
+    showEmptyState: Boolean = true
 ){
     if (artists.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = stringResource(R.string.Artists_Empty),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            )
+        if (showEmptyState) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.Artists_Empty),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
         }
         return
     }
@@ -754,10 +785,10 @@ fun ArtistsGrid(
             columns = GridCells.Adaptive(128.dp),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(end = 28.dp), // Space for fast scroller
+                .padding(end = if (showAlphabetScroller) 28.dp else 0.dp),
             state = gridState
         ) {
-            if (showProviderDividers && groupedArtists.size > 1) {
+            if (showProviderDividers && groupedArtists.size > 1 && !showAlphabetScroller) {
                 groupedArtists.forEach { (groupName, artistsInGroup) ->
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Column(Modifier.padding(start = 12.dp)) {
@@ -786,9 +817,11 @@ fun ArtistsGrid(
                         items = artistsInGroup,
                         key = { _, artist -> artist.navidromeID }
                     ) { index, artist ->
-                        ArtistCard(artist = artist, onClick = {
-                            onArtistSelected(artist)
-                        })
+                        ArtistCard(
+                            artist = artist,
+                            onClick = { onArtistSelected(artist) },
+                            onStartRadio = onStartRadio
+                        )
                     }
                 }
             } else {
@@ -796,27 +829,30 @@ fun ArtistsGrid(
                     items = artists,
                     key = { it.navidromeID }
                 ) { artist ->
-                    ArtistCard(artist = artist, onClick = {
-                        onArtistSelected(artist)
-                })
+                    ArtistCard(
+                        artist = artist,
+                        onClick = { onArtistSelected(artist) },
+                        onStartRadio = onStartRadio
+                    )
             }
         }
         }
 
-        // iPod-style A-Z fast scroller
-        AlphabetFastScroller(
-            items = artists,
-            getSectionLetter = { artist ->
-                val name = artist.name
-                when {
-                    name.isBlank() || name.contains("unknown", ignoreCase = true) -> '?'
-                    name.firstOrNull()?.isLetter() == true -> name.first().uppercaseChar()
-                    else -> '#'
-                }
-            },
-            gridState = gridState,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
+        if (showAlphabetScroller) {
+            AlphabetFastScroller(
+                items = artists,
+                getSectionLetter = { artist ->
+                    val name = artist.name
+                    when {
+                        name.isBlank() || name.contains("unknown", ignoreCase = true) -> '?'
+                        name.firstOrNull()?.isLetter() == true -> name.first().uppercaseChar()
+                        else -> '#'
+                    }
+                },
+                gridState = gridState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
     }
 }
 //endregion
@@ -827,23 +863,9 @@ fun ArtistsGrid(
 fun PlaylistGrid(playlists: List<MediaItem>, onPlaylistSelected: (playlist: MediaItem) -> Unit, onDeletePlaylist: (String) -> Unit = {}){
     val gridState = rememberLazyGridState()
 
-    val favouritesPlaylist = MediaItem.Builder()
-        .setMediaId("favourites")
-        .setMediaMetadata(
-            MediaMetadata.Builder()
-                .setTitle("Starred Songs")
-                .setIsPlayable(false)
-                .setIsBrowsable(true)
-                .setArtworkUri(("android.resource://com.craftworks.music/" + R.drawable.favourites).toUri())
-                .setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST)
-                .setExtras(Bundle().apply {
-                    putString("navidromeID", "favourites")
-                })
-                .build()
-        )
-        .build()
-
-    val allPlaylists = listOf(favouritesPlaylist) + playlists
+    val allPlaylists = listOf(favoritesPlaylistMediaItem()) + playlists.filterNot {
+        it.mediaMetadata.extras?.getString("navidromeID") == "favourites"
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(

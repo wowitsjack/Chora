@@ -13,6 +13,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +41,14 @@ class PlaylistScreenViewModel @Inject constructor(
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _hasLoaded = MutableStateFlow(false)
+    val hasLoaded: StateFlow<Boolean> = _hasLoaded.asStateFlow()
+
+    private val _playlistDetailsLoaded = MutableStateFlow(false)
+    val playlistDetailsLoaded: StateFlow<Boolean> = _playlistDetailsLoaded.asStateFlow()
+
+    private var playlistDetailsJob: Job? = null
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -89,11 +98,14 @@ class PlaylistScreenViewModel @Inject constructor(
                 e.printStackTrace()
             } finally {
                 _isLoading.value = false
+                _hasLoaded.value = true
             }
         }
     }
 
     fun setCurrentPlaylist(playlist: MediaItem){
+        playlistDetailsJob?.cancel()
+        _playlistDetailsLoaded.value = false
         _selectedPlaylistSongs.value = emptyList<MediaItem>()
         _selectedPlaylist.value = playlist
         fetchPlaylistDetails() // Fetch details when playlist is set
@@ -117,14 +129,20 @@ class PlaylistScreenViewModel @Inject constructor(
     }
 
     fun fetchPlaylistDetails() {
-        if (_selectedPlaylist.value == null) return
+        if (_selectedPlaylist.value == null) {
+            _playlistDetailsLoaded.value = true
+            return
+        }
 
         val playlistId = _selectedPlaylist.value?.mediaMetadata?.extras?.getString("navidromeID")
-        if (playlistId == null) return
+        if (playlistId == null) {
+            _playlistDetailsLoaded.value = true
+            return
+        }
 
         println("Fetching playlist details for playlist ID: $playlistId")
 
-        viewModelScope.launch {
+        playlistDetailsJob = viewModelScope.launch {
             val loadingJob = launch {
                 delay(1000)
                 if (_selectedPlaylistSongs.value.isEmpty()) {
@@ -133,7 +151,7 @@ class PlaylistScreenViewModel @Inject constructor(
             }
             try {
                 _selectedPlaylistSongs.value = if (playlistId == "favourites") {
-                    starredRepository.getStarredItems()
+                    starredRepository.getStarredItems(ignoreCachedResponse = true)
                 } else {
                     playlistRepository.getPlaylistSongs(playlistId)
                 }
@@ -142,6 +160,7 @@ class PlaylistScreenViewModel @Inject constructor(
             } finally {
                 loadingJob.cancel()
                 _isLoading.value = false
+                _playlistDetailsLoaded.value = true
             }
         }
     }
@@ -158,6 +177,39 @@ class PlaylistScreenViewModel @Inject constructor(
             } finally {
                 _isLoading.value = false
             }
+        }
+    }
+
+    suspend fun createDiscoveryPlaylist(
+        baseName: String,
+        songs: List<MediaItem>
+    ): String? {
+        val songIds = songs.mapNotNull { song ->
+            song.mediaMetadata.extras?.getString("navidromeID")
+                ?.takeUnless { it.startsWith("Local_") }
+        }.distinct()
+        if (songIds.isEmpty()) return null
+
+        val playlistName = uniquePlaylistName(
+            baseName = "$baseName Mix",
+            existingNames = _allPlaylists.value.mapNotNull {
+                it.mediaMetadata.title?.toString()
+            }.toSet()
+        )
+
+        _isLoading.value = true
+        return try {
+            if (!playlistRepository.createNavidromePlaylist(playlistName, songIds)) {
+                null
+            } else {
+                _allPlaylists.value = playlistRepository.getPlaylists(true)
+                playlistName
+            }
+        } catch (error: Exception) {
+            error.printStackTrace()
+            null
+        } finally {
+            _isLoading.value = false
         }
     }
 
@@ -188,4 +240,11 @@ class PlaylistScreenViewModel @Inject constructor(
             }
         }
     }
+}
+
+internal fun uniquePlaylistName(baseName: String, existingNames: Set<String>): String {
+    if (baseName !in existingNames) return baseName
+    var suffix = 2
+    while ("$baseName $suffix" in existingNames) suffix += 1
+    return "$baseName $suffix"
 }

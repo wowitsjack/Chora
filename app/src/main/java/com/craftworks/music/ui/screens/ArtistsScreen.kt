@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -54,6 +56,7 @@ import com.craftworks.music.ui.elements.TopBarWithSearch
 import com.craftworks.music.ui.playing.dpToPx
 import com.craftworks.music.ui.util.TextDisplayUtils
 import com.craftworks.music.ui.viewmodels.ArtistsScreenViewModel
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -67,7 +70,23 @@ fun ArtistsScreen(
 ) {
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val allArtistList by viewModel.allArtists.collectAsStateWithLifecycle()
+    val hasLoaded by viewModel.hasLoaded.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val songActionsViewModel: SongActionsViewModel = hiltViewModel()
+
+    val startArtistRadio: (com.craftworks.music.data.model.MediaData.Artist) -> Unit = { artist ->
+        coroutineScope.launch {
+            Toast.makeText(context, "Starting artist radio…", Toast.LENGTH_SHORT).show()
+            val seeds = viewModel.getSongsForArtists(listOf(artist))
+            val mix = runCatching { songActionsViewModel.buildRadio(seeds) }.getOrDefault(emptyList())
+            if (mix.isNotEmpty()) {
+                SongHelper.play(mix, 0, mediaController)
+            } else {
+                Toast.makeText(context, "Couldn’t start artist radio", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val state = rememberPullToRefreshState()
     val isRefreshing by viewModel.isLoading.collectAsStateWithLifecycle()
@@ -146,12 +165,18 @@ fun ArtistsScreen(
                                     }
                                 }
                             }
-                            ArtistsGrid(searchResults, onArtistSelected = { artist ->
-                                viewModel.setSelectedArtist(artist)
-                                navHostController.navigate(Screen.ArtistDetails.route) {
-                                    launchSingleTop = true
-                                }
-                            })
+                            ArtistsGrid(
+                                searchResults,
+                                onArtistSelected = { artist ->
+                                    viewModel.setSelectedArtist(artist)
+                                    navHostController.navigate(Screen.ArtistDetails.route) {
+                                        launchSingleTop = true
+                                    }
+                                },
+                                onStartRadio = startArtistRadio,
+                                showAlphabetScroller = false,
+                                showEmptyState = false
+                            )
                         }
                     },
                     extraAction = {
@@ -198,12 +223,18 @@ fun ArtistsScreen(
                                  else known.sortedByDescending { TextDisplayUtils.getSortKey(it.name) }
                     sorted + unknown
                 }
-                ArtistsGrid(sortedArtists, onArtistSelected = { artist ->
-                    viewModel.setSelectedArtist(artist)
-                    navHostController.navigate(Screen.ArtistDetails.route) {
-                        launchSingleTop = true
-                    }
-                })
+                ArtistsGrid(
+                    sortedArtists,
+                    onArtistSelected = { artist ->
+                        viewModel.setSelectedArtist(artist)
+                        navHostController.navigate(Screen.ArtistDetails.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onStartRadio = startArtistRadio,
+                    showAlphabetScroller = sortAscending,
+                    showEmptyState = hasLoaded && !isRefreshing
+                )
             }
         }
     }

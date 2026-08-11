@@ -64,7 +64,9 @@ import com.gigamole.composefadingedges.marqueeHorizontalFadingEdges
 fun NowPlayingLandscape(
     mediaController: MediaController? = null,
     iconColor: Color = Color.Black,
-    metadata: MediaMetadata? = null
+    metadata: MediaMetadata? = null,
+    onOpenStemMixer: () -> Unit = {},
+    overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit = { _, _ -> }
 ){
     val foldableState = rememberFoldableState()
     val isTableTop = foldableState.layoutMode == LayoutMode.TABLE_TOP
@@ -81,9 +83,9 @@ fun NowPlayingLandscape(
     val stripTrackNumbers by settingsManager.stripTrackNumbersFromTitlesFlow.collectAsStateWithLifecycle(false)
 
     if (isTableTop) {
-        NowPlayingTableTop(mediaController, iconTextColor, metadata, stripTrackNumbers)
+        NowPlayingTableTop(mediaController, iconTextColor, metadata, stripTrackNumbers, onOpenStemMixer, overflowMenu)
     } else {
-        NowPlayingLandscapeContent(mediaController, iconTextColor, metadata, isCompactHeight, stripTrackNumbers)
+        NowPlayingLandscapeContent(mediaController, iconTextColor, metadata, isCompactHeight, stripTrackNumbers, onOpenStemMixer, overflowMenu)
     }
 }
 
@@ -92,7 +94,9 @@ private fun NowPlayingTableTop(
     mediaController: MediaController?,
     iconTextColor: Color,
     metadata: MediaMetadata?,
-    stripTrackNumbers: Boolean
+    stripTrackNumbers: Boolean,
+    onOpenStemMixer: () -> Unit,
+    overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit
 ) {
     val lyrics by LyricsState.lyrics.collectAsStateWithLifecycle()
     val isAudiobook = metadata?.extras?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
@@ -178,9 +182,17 @@ private fun NowPlayingTableTop(
                         AudiobookSecondaryControls(mediaController, iconTextColor, metadata, 48.dp)
                     } else {
                         LyricsButton(iconTextColor, 48.dp)
-                        FavoriteButton(iconTextColor, 48.dp, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                        FavoriteButton(
+                            iconTextColor,
+                            48.dp,
+                            metadata,
+                            metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
+                                metadata?.extras?.getString("navidromeID") != null
+                        )
                         DownloadButton(iconTextColor, 48.dp, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                        StemMixerButton(iconTextColor, 48.dp, metadata, onOpenStemMixer)
                         PlayQueueButton(iconTextColor, 48.dp)
+                        overflowMenu(iconTextColor, 48.dp)
                     }
                 }
             }
@@ -194,7 +206,9 @@ private fun NowPlayingLandscapeContent(
     iconTextColor: Color,
     metadata: MediaMetadata?,
     isCompactHeight: Boolean,
-    stripTrackNumbers: Boolean
+    stripTrackNumbers: Boolean,
+    onOpenStemMixer: () -> Unit,
+    overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit
 ) {
     // Button sizing for landscape
     val mainButtonSize = 92.dp
@@ -358,9 +372,17 @@ private fun NowPlayingLandscapeContent(
                     AudiobookSecondaryControls(mediaController, iconTextColor, metadata, secondaryButtonSize)
                 } else {
                     LyricsButton(iconTextColor, secondaryButtonSize)
-                    FavoriteButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                    FavoriteButton(
+                        iconTextColor,
+                        secondaryButtonSize,
+                        metadata,
+                        metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
+                            metadata?.extras?.getString("navidromeID") != null
+                    )
                     DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                    StemMixerButton(iconTextColor, secondaryButtonSize, metadata, onOpenStemMixer)
                     PlayQueueButton(iconTextColor, secondaryButtonSize)
+                    overflowMenu(iconTextColor, secondaryButtonSize)
                 }
             }
         }

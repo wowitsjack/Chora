@@ -76,9 +76,8 @@ import com.craftworks.music.data.model.Screen
 import com.craftworks.music.data.model.toAlbum
 import com.craftworks.music.fadingEdge
 import com.craftworks.music.player.SongHelper
-import com.craftworks.music.ui.elements.AlbumCard
+import com.craftworks.music.ui.elements.HorizontalSongCard
 import com.craftworks.music.ui.elements.dialogs.dialogFocusable
-import com.craftworks.music.ui.util.rememberFoldableState
 import com.craftworks.music.ui.util.responsiveGridCells
 import com.craftworks.music.ui.viewmodels.ArtistsScreenViewModel
 import kotlinx.coroutines.launch
@@ -94,18 +93,23 @@ fun ArtistDetails(
     viewModel: ArtistsScreenViewModel = hiltViewModel()
 ) {
     val showLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val detailsLoaded by viewModel.artistDetailsLoaded.collectAsStateWithLifecycle()
     val artist = viewModel.selectedArtist.collectAsStateWithLifecycle().value
     val artistAlbums = viewModel.artistAlbums.collectAsStateWithLifecycle().value
+    val artistSongs = viewModel.artistSongs.collectAsStateWithLifecycle().value
     val context = LocalContext.current
     val imageFadingEdge = Brush.verticalGradient(listOf(Color.Red.copy(0.75f), Color.Transparent))
 
-    val foldableState = rememberFoldableState()
     val gridColumns = responsiveGridCells()
     val coroutineScope = rememberCoroutineScope()
 
+    val discography = remember(artistAlbums, artistSongs) {
+        buildArtistDiscography(artistAlbums, artistSongs)
+    }
+
     // Loading spinner
     AnimatedVisibility(
-        visible = showLoading,
+        visible = showLoading || !detailsLoaded,
         enter = fadeIn(),
         exit = fadeOut()
     ) {
@@ -127,12 +131,6 @@ fun ArtistDetails(
                 modifier = Modifier.padding(top = 16.dp)
             )
         }
-    }
-
-    // Group albums by year - use remember to avoid recomputation
-    val groupedAlbums = remember(artistAlbums) {
-        artistAlbums.groupBy { it.mediaMetadata.recordingYear }
-            .toSortedMap(compareByDescending { it })
     }
 
     // Main Content
@@ -287,16 +285,9 @@ fun ArtistDetails(
                 ) {
                     Button(
                         onClick = {
-                            coroutineScope.launch {
-                                val allArtistSongsList = artistAlbums.mapNotNull {
-                                    it.mediaMetadata.extras?.getString("navidromeID")?.let { id ->
-                                        val album = viewModel.getAlbum(id)
-                                        if (album.size > 1) album.subList(1, album.size) else null
-                                    }
-                                }.flatten()
-
-                                if (allArtistSongsList.isNotEmpty()) {
-                                    SongHelper.play(allArtistSongsList, 0, mediaController)
+                            if (discography.orderedSongs.isNotEmpty()) {
+                                coroutineScope.launch {
+                                    SongHelper.play(discography.orderedSongs, 0, mediaController)
                                 }
                             }
                         },
@@ -312,18 +303,11 @@ fun ArtistDetails(
                     }
                     OutlinedButton (
                         onClick = {
-                            coroutineScope.launch {
-                                val allArtistSongsList = artistAlbums.mapNotNull {
-                                    it.mediaMetadata.extras?.getString("navidromeID")?.let { id ->
-                                        val album = viewModel.getAlbum(id)
-                                        if (album.size > 1) album.subList(1, album.size) else null
-                                    }
-                                }.flatten()
-
-                                if (allArtistSongsList.isNotEmpty()) {
-                                    mediaController?.shuffleModeEnabled = true
-                                    val random = allArtistSongsList.indices.random()
-                                    SongHelper.play(allArtistSongsList, random, mediaController)
+                            if (discography.orderedSongs.isNotEmpty()) {
+                                mediaController?.shuffleModeEnabled = true
+                                val random = discography.orderedSongs.indices.random()
+                                coroutineScope.launch {
+                                    SongHelper.play(discography.orderedSongs, random, mediaController)
                                 }
                             }
                         },
@@ -354,38 +338,71 @@ fun ArtistDetails(
                 )
             }
 
-            groupedAlbums.forEach { (groupName, albumsInGroup) ->
-                item(key = "year_header_$groupName", span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        text = groupName.toString(),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+            discography.groups.forEach { group ->
+                item(key = "album_header_${group.key}", span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
                         modifier = Modifier
-                            .padding(horizontal = 12.dp)
-                            .padding(top = 12.dp)
-                    )
+                            .fillMaxWidth()
+                            .then(
+                                group.album?.let { album ->
+                                    Modifier.clickable {
+                                        val albumData = album.toAlbum()
+                                        val encodedImage = URLEncoder.encode(albumData.coverArt ?: "", "UTF-8")
+                                        navHostController.navigate(Screen.AlbumDetails.route + "/${albumData.navidromeID}?image=$encodedImage") {
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                } ?: Modifier
+                            )
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = group.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        group.year?.let { year ->
+                            Text(
+                                text = year.toString(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
-                itemsIndexed(albumsInGroup, key = { _, album -> album.mediaId }) { index, album ->
-                    AlbumCard(
-                        album = album,
+                itemsIndexed(
+                    items = group.songs,
+                    key = { index, song -> "${group.key}_${song.mediaId}_$index" },
+                    span = { _, _ -> GridItemSpan(maxLineSpan) }
+                ) { _, song ->
+                    HorizontalSongCard(
+                        song = song,
+                        showTrackNumber = true,
+                        modifier = Modifier.padding(horizontal = 6.dp),
                         onClick = {
-                            val albumData = album.toAlbum()
-                            val encodedImage = URLEncoder.encode(albumData.coverArt ?: "", "UTF-8")
-                            navHostController.navigate(Screen.AlbumDetails.route + "/${albumData.navidromeID}?image=$encodedImage") {
-                                launchSingleTop = true
-                            }
-                        },
-                        onPlay = {
+                            val index = discography.orderedSongs.indexOfFirst {
+                                it.mediaId == song.mediaId
+                            }.coerceAtLeast(0)
                             coroutineScope.launch {
-                                val mediaItems = viewModel.getAlbum(album.mediaMetadata.extras?.getString("navidromeID") ?: "")
-                                if (mediaItems.size > 1)
-                                    SongHelper.play(
-                                        mediaItems = mediaItems.subList(1, mediaItems.size),
-                                        index = 0,
-                                        mediaController = mediaController
-                                    )
+                                SongHelper.play(discography.orderedSongs, index, mediaController)
                             }
                         }
+                    )
+                }
+            }
+
+            if (detailsLoaded && !showLoading && discography.orderedSongs.isEmpty()) {
+                item(key = "artist_songs_empty", span = { GridItemSpan(maxLineSpan) }) {
+                    Text(
+                        text = stringResource(R.string.Songs_Empty),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(24.dp)
                     )
                 }
             }

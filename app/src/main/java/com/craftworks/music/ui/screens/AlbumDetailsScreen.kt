@@ -440,7 +440,7 @@ private fun AlbumHeader(
     )
 
     val albumTitle = firstAlbum.mediaMetadata.title?.toString() ?: "Album"
-    val albumArtist = firstAlbum.mediaMetadata.artist?.toString()
+    val artistName = firstAlbum.mediaMetadata.artist?.toString()
 
     Box(
         modifier = Modifier
@@ -451,7 +451,7 @@ private fun AlbumHeader(
             // Use generated artwork
             GeneratedAlbumArtStatic(
                 title = albumTitle,
-                artist = albumArtist,
+                artist = artistName,
                 album = selectedAlbumId,
                 size = 224.dp,
                 modifier = Modifier
@@ -483,7 +483,7 @@ private fun AlbumHeader(
                     if (generatedArtworkEnabled) {
                         GeneratedAlbumArtStatic(
                             title = albumTitle,
-                            artist = albumArtist,
+                            artist = artistName,
                             album = selectedAlbumId,
                             size = 224.dp,
                             modifier = Modifier.fillMaxSize(),

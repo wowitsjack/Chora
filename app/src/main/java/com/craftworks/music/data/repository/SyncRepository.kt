@@ -595,7 +595,7 @@ class SyncRepository @Inject constructor(
             _syncProgress.value = "Syncing songs..."
 
             // Parallel sync with semaphore to limit concurrent requests
-            val concurrency = 8 // Number of parallel requests
+            val concurrency = 4 // Avoid saturating high-latency VPN links during large syncs.
             val semaphore = Semaphore(concurrency)
             val songInsertMutex = Mutex()
             val progressUpdateMutex = Mutex()
@@ -654,9 +654,39 @@ class SyncRepository @Inject constructor(
                 return handlePauseOrCancel(SyncPhase.SONGS)
             }
 
-            if (failedAlbums.isNotEmpty()) {
+            // Let the parallel request pressure subside, then give transient failures one
+            // final serial attempt before failing the whole sync.
+            val serialRetryIds = failedAlbumsMutex.withLock { failedAlbums.toList() }
+            if (serialRetryIds.isNotEmpty()) {
+                _syncProgress.value = "Retrying ${serialRetryIds.size} album${if (serialRetryIds.size == 1) "" else "s"}..."
+                val albumsById = albums.associateBy { it.navidromeID }
+                val recoveredIds = mutableSetOf<String>()
+                serialRetryIds.forEach { albumId ->
+                    val album = albumsById[albumId] ?: return@forEach
+                    if (shouldPauseOrCancel()) {
+                        return@forEach
+                    }
+                    kotlinx.coroutines.delay(1_000L)
+                    val recovered = syncAlbumSongsWithDelta(
+                        album = album,
+                        forceRefresh = true,
+                        syncStartedAt = syncStartedAt,
+                        existingSongIds = existingSongIds,
+                        insertMutex = songInsertMutex,
+                        maxRetries = 0,
+                        onSongCounts = { newCount, updatedCount ->
+                            newSongsCount.addAndGet(newCount)
+                            updatedSongsCount.addAndGet(updatedCount)
+                        }
+                    )
+                    if (recovered) recoveredIds.add(albumId)
+                }
+                failedAlbumsMutex.withLock { failedAlbums.removeAll(recoveredIds) }
+            }
+
+            if (failedAlbumsMutex.withLock { failedAlbums.isNotEmpty() }) {
                 throw IllegalStateException(
-                    "Could not sync songs from ${failedAlbums.size} albums"
+                    "Could not sync songs from ${failedAlbumsMutex.withLock { failedAlbums.size }} albums"
                 )
             }
 
@@ -699,10 +729,10 @@ class SyncRepository @Inject constructor(
         syncStartedAt: Long,
         existingSongIds: Set<String>,
         insertMutex: Mutex,
+        maxRetries: Int = 2,
         onSongCounts: (newCount: Int, updatedCount: Int) -> Unit
     ): Boolean {
         var lastException: Exception? = null
-        val maxRetries = 2
 
         repeat(maxRetries + 1) { attempt ->
             try {
@@ -754,7 +784,7 @@ class SyncRepository @Inject constructor(
                 if (e is CancellationException) throw e
                 lastException = e
                 if (attempt < maxRetries) {
-                    kotlinx.coroutines.delay(50L * (1 shl attempt))
+                    kotlinx.coroutines.delay(1_000L * (1 shl attempt))
                 }
             }
         }

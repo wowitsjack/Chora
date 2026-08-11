@@ -100,6 +100,8 @@ fun PlaylistDetails(
         viewModel.selectedPlaylist.collectAsStateWithLifecycle().value?.mediaMetadata
     val playlistSongs = viewModel.selectedPlaylistSongs.collectAsStateWithLifecycle().value
     val isLoading = viewModel.isLoading.collectAsStateWithLifecycle().value
+    val detailsLoaded = viewModel.playlistDetailsLoaded.collectAsStateWithLifecycle().value
+    val showLoading = isLoading || !detailsLoaded
 
     val playlistDuration =
         remember(playlistSongs) { playlistSongs.sumOf { it.mediaMetadata.durationMs ?: 0 } }
@@ -119,7 +121,7 @@ fun PlaylistDetails(
 
     // Loading spinner
     AnimatedVisibility(
-        visible = isLoading,
+        visible = showLoading,
         enter = fadeIn(),
         exit = fadeOut()
     ) {
@@ -145,7 +147,7 @@ fun PlaylistDetails(
 
     // Main Content
     AnimatedVisibility(
-        visible = !isLoading && playlistSongs.isNotEmpty(),
+        visible = !showLoading && playlistMetadata != null,
         enter = fadeIn()
     ) {
         LazyColumn(
@@ -254,7 +256,8 @@ fun PlaylistDetails(
                         },
                         modifier = Modifier
                             .widthIn(min = 128.dp, max = 320.dp)
-                            .focusRequester(requester)
+                            .focusRequester(requester),
+                        enabled = playlistSongs.isNotEmpty()
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -274,7 +277,8 @@ fun PlaylistDetails(
                                 }
                             }
                         },
-                        modifier = Modifier.widthIn(min = 128.dp, max = 320.dp)
+                        modifier = Modifier.widthIn(min = 128.dp, max = 320.dp),
+                        enabled = playlistSongs.isNotEmpty()
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -286,6 +290,37 @@ fun PlaylistDetails(
                             )
                             Text(stringResource(R.string.Action_Shuffle), maxLines = 1)
                         }
+                    }
+                }
+            }
+
+            if (detailsLoaded && playlistSongs.isEmpty()) {
+                item {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 36.dp)
+                    ) {
+                        Icon(
+                            imageVector = ImageVector.vectorResource(R.drawable.round_star_border_24),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(42.dp)
+                        )
+                        Text(
+                            text = "No favorites yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 12.dp)
+                        )
+                        Text(
+                            text = "Tap the star beside any song to add it here.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                 }
             }
@@ -326,6 +361,11 @@ fun PlaylistDetails(
                     song = song,
                     modifier = Modifier.animateItem(),
                     onInstantMix = songActionsViewModel::buildInstantMix,
+                    onFavoriteChanged = { isFavorite ->
+                        if (!isFavorite && playlistMetadata?.extras?.getString("navidromeID") == "favourites") {
+                            viewModel.fetchPlaylistDetails()
+                        }
+                    },
                     onClick = {
                         if (isInSelectionMode) {
                             if (selectedSongIds.contains(songId)) {

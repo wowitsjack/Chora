@@ -9,6 +9,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,7 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -61,6 +63,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.craftworks.music.R
@@ -68,9 +71,12 @@ import com.craftworks.music.formatMilliseconds
 import com.craftworks.music.managers.settings.ArtworkSettingsManager
 import com.craftworks.music.managers.settings.PlaybackSettingsManager
 import com.craftworks.music.player.SongHelper
+import com.craftworks.music.data.model.isFavorite
 import com.craftworks.music.player.rememberManagedMediaController
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.ui.util.TextDisplayUtils
+import com.craftworks.music.ui.playing.StemMixerDialog
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -97,6 +103,7 @@ fun HorizontalSongCard(
     artworkStyle: ArtworkSettingsManager.ArtworkStyle = ArtworkSettingsManager.ArtworkStyle.GRADIENT,
     colorPalette: ArtworkSettingsManager.ColorPalette = ArtworkSettingsManager.ColorPalette.MATERIAL_YOU,
     showInitials: Boolean = true,
+    onFavoriteChanged: ((Boolean) -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -105,6 +112,14 @@ fun HorizontalSongCard(
     val instantMixErrorMessage = stringResource(R.string.Instant_Mix_Error)
     var expanded by remember { mutableStateOf(false) }
     var instantMixLoading by remember(song.mediaId) { mutableStateOf(false) }
+    var stemMixerOpen by remember(song.mediaId) { mutableStateOf(false) }
+    var isFavorite by remember(song.mediaId) { mutableStateOf(song.isFavorite()) }
+    val songActionsViewModel: SongActionsViewModel = hiltViewModel()
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(song.mediaId, song.mediaMetadata.extras?.getString("starred")) {
+        isFavorite = song.isFavorite()
+    }
 
     // Check if generated artwork is needed
     val artworkUri = song.mediaMetadata.artworkUri?.toString()
@@ -355,12 +370,57 @@ fun HorizontalSongCard(
                 )
             }
 
-            Box(
-                modifier = Modifier.width(48.dp)
+            Column(
+                modifier = Modifier
+                    .width(48.dp)
+                    .height(72.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                IconButton(
-                    modifier = Modifier,
-                    onClick = { expanded = true },
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable(
+                            enabled = song.mediaMetadata.extras?.getString("navidromeID") != null,
+                            onClick = {
+                                val previous = isFavorite
+                                isFavorite = !previous
+                                coroutineScope.launch {
+                                    val success = songActionsViewModel.setFavorite(song, isFavorite)
+                                    if (success) {
+                                        onFavoriteChanged?.invoke(isFavorite)
+                                    } else {
+                                        isFavorite = previous
+                                        Toast.makeText(
+                                            context,
+                                            "Could not update Favorites",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            }
+                        )
+                ) {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(
+                            if (isFavorite) R.drawable.round_star_24
+                            else R.drawable.round_star_border_24
+                        ),
+                        tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
+                        contentDescription = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable { expanded = true },
 //                    colors = IconButtonDefaults.iconButtonColors(
 //                        containerColor = MaterialTheme.colorScheme.background,
 //                        contentColor = MaterialTheme.colorScheme.primary,
@@ -375,7 +435,6 @@ fun HorizontalSongCard(
                     )
                 }
 
-                val coroutineScope = rememberCoroutineScope()
                 DropdownMenu(
                     modifier = Modifier,
                     expanded = expanded,
@@ -484,6 +543,23 @@ fun HorizontalSongCard(
                         }
                     )
                     DropdownMenuItem(
+                        enabled = isNavidromeSong,
+                        text = { Text("Stem Mixer") },
+                        onClick = {
+                            expanded = false
+                            coroutineScope.launch {
+                                SongHelper.playNow(song, mediaController)
+                                stemMixerOpen = true
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = ImageVector.vectorResource(R.drawable.rounded_tune_24),
+                                contentDescription = null
+                            )
+                        }
+                    )
+                    DropdownMenuItem(
                         enabled = song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == false && onDownload != null,
                         text = {
                             Text(stringResource(R.string.Action_Download))
@@ -502,6 +578,14 @@ fun HorizontalSongCard(
                 }
             }
         }
+    }
+
+    if (stemMixerOpen) {
+        StemMixerDialog(
+            song = song,
+            mediaController = mediaController,
+            onDismiss = { stemMixerOpen = false }
+        )
     }
 }
 

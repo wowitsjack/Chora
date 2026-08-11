@@ -4,6 +4,9 @@ import android.app.Activity
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -18,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,12 +33,18 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MediaItem
 import androidx.media3.session.MediaController
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.data.model.isFavorite
 import com.craftworks.music.ui.util.LayoutMode
 import com.craftworks.music.ui.util.rememberFoldableState
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -77,7 +87,9 @@ interface PaletteManagerEntryPoint {
 @Composable
 fun NowPlayingContent(
     mediaController: MediaController? = null,
-    metadata: MediaMetadata? = null
+    metadata: MediaMetadata? = null,
+    onGoToArtist: (artistId: String, artistName: String) -> Unit = { _, _ -> },
+    onGoToAlbum: (albumId: String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -89,6 +101,82 @@ fun NowPlayingContent(
         mutableStateOf(listOf<Color>())
     }
     var iconTextColor by remember { mutableStateOf<Color>(Color.White) }
+    var stemMixerSong by remember { mutableStateOf<MediaItem?>(null) }
+    var replacementSong by remember { mutableStateOf<MediaItem?>(null) }
+    val currentSong = mediaController?.currentMediaItem
+    var menuIsFavorite by remember(
+        currentSong?.mediaId,
+        metadata?.extras?.getString("starred")
+    ) { mutableStateOf(currentSong?.isFavorite() == true) }
+    val coroutineScope = rememberCoroutineScope()
+    val actionViewModel = if (!view.isInEditMode) hiltViewModel<SongActionsViewModel>() else null
+    val replacementPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val song = replacementSong
+        replacementSong = null
+        if (uri != null && song != null && actionViewModel != null) {
+            coroutineScope.launch {
+                val success = actionViewModel.replaceSongFile(song, uri)
+                Toast.makeText(
+                    context,
+                    if (success) "Audio file replaced" else "Could not replace audio file",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    val overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit = { color, size ->
+        NowPlayingOverflowMenu(
+            song = currentSong,
+            color = color,
+            size = size,
+            isFavorite = menuIsFavorite,
+            onGoToArtist = {
+                val extras = currentSong?.mediaMetadata?.extras
+                val artistId = extras?.getString("artistId").orEmpty()
+                val artistName = currentSong?.mediaMetadata?.artist?.toString().orEmpty()
+                if (artistId.isNotBlank()) onGoToArtist(artistId, artistName)
+            },
+            onGoToAlbum = {
+                currentSong?.mediaMetadata?.extras?.getString("albumId")
+                    ?.takeIf(String::isNotBlank)
+                    ?.let(onGoToAlbum)
+            },
+            onToggleFavorite = {
+                val song = currentSong ?: return@NowPlayingOverflowMenu
+                val viewModel = actionViewModel ?: return@NowPlayingOverflowMenu
+                val desired = !menuIsFavorite
+                coroutineScope.launch {
+                    if (viewModel.setFavorite(song, desired)) {
+                        menuIsFavorite = desired
+                    } else {
+                        Toast.makeText(context, "Could not update Favorites", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onHide = {
+                val song = currentSong ?: return@NowPlayingOverflowMenu
+                val viewModel = actionViewModel ?: return@NowPlayingOverflowMenu
+                coroutineScope.launch {
+                    if (viewModel.hideSong(song)) {
+                        val index = mediaController?.currentMediaItemIndex ?: -1
+                        if (index >= 0) mediaController?.removeMediaItem(index)
+                        Toast.makeText(context, "Hidden from library", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Could not hide song", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onReplace = {
+                currentSong?.let {
+                    replacementSong = it
+                    replacementPicker.launch(arrayOf("audio/*"))
+                }
+            }
+        )
+    }
 
     // Initialize backgroundDarkMode with system theme only once
     val systemDarkTheme = isSystemInDarkTheme()
@@ -113,6 +201,9 @@ fun NowPlayingContent(
 
     LaunchedEffect(metadata?.artworkUri) {
         if (metadata?.artworkUri != null && backgroundStyle != NowPlayingBackground.PLAIN) {
+            // Rapid skips should not decode and palette-scan artwork for songs that
+            // are no longer current by the time the work starts.
+            delay(180)
             colors = extractColorsFromUri(metadata.artworkUri.toString(), context)
 
             // Fix: Use 0.5f threshold for better contrast (0.8f was too high, causing white text on light grey)
@@ -161,9 +252,33 @@ fun NowPlayingContent(
     }
 
     if (useLandscapeLayout) {
-        NowPlayingLandscape(mediaController, iconTextColor, metadata)
+        NowPlayingLandscape(
+            mediaController = mediaController,
+            iconColor = iconTextColor,
+            metadata = metadata,
+            onOpenStemMixer = {
+                mediaController?.currentMediaItem?.let { stemMixerSong = it }
+            },
+            overflowMenu = overflowMenu
+        )
     } else {
-        NowPlayingPortrait(mediaController, iconTextColor, metadata)
+        NowPlayingPortrait(
+            mediaController = mediaController,
+            iconColor = iconTextColor,
+            metadata = metadata,
+            onOpenStemMixer = {
+                mediaController?.currentMediaItem?.let { stemMixerSong = it }
+            },
+            overflowMenu = overflowMenu
+        )
+    }
+
+    stemMixerSong?.let { song ->
+        StemMixerDialog(
+            song = song,
+            mediaController = mediaController,
+            onDismiss = { stemMixerSong = null }
+        )
     }
 
     // Play Queue

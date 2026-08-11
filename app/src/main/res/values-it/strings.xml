@@ -66,9 +66,9 @@
     <string name="Audiobooks_Sleep">Timer</string>
     <string name="Home_Audiobooks_Continue">Continua %1$s</string>
     <string name="Home_Audiobooks_Count">%1$d libri nella tua libreria</string>
-    <string name="Action_Instant_Mix">Mix istantaneo</string>
-    <string name="Instant_Mix_Building">Creazione del mix istantaneo…</string>
-    <string name="Instant_Mix_Error">Impossibile creare un mix istantaneo.</string>
+    <string name="Action_Instant_Mix">Avvia radio</string>
+    <string name="Instant_Mix_Building">Avvio della radio…</string>
+    <string name="Instant_Mix_Error">Impossibile avviare la radio.</string>
     <string name="Queue_Empty_Title">La coda è vuota</string>
     <string name="Queue_Empty_Description">Aggiungi un brano, avvia un mix istantaneo o crea una playlist dalla Home.</string>
     <string name="Queue_Remove_Item">Rimuovi %1$s dalla coda</string>

@@ -3,6 +3,7 @@ package com.craftworks.music.ui.viewmodels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import com.craftworks.music.data.database.dao.ArtistDao
 import com.craftworks.music.data.database.dao.SongDao
 import com.craftworks.music.data.database.entity.toMediaDataArtist
@@ -16,6 +17,7 @@ import com.craftworks.music.ui.util.TextDisplayUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -37,9 +40,13 @@ class ArtistsScreenViewModel @Inject constructor(
     private val songDao: SongDao
 ) : ViewModel() {
 
+    private val _hasLoaded = MutableStateFlow(false)
+    val hasLoaded: StateFlow<Boolean> = _hasLoaded.asStateFlow()
+
     // Observe Room database directly for instant UI updates
     // Sort using TextDisplayUtils.getSortKey to handle leading quotes/punctuation properly
     val allArtists: StateFlow<List<MediaData.Artist>> = artistDao.getAllArtists()
+        .onEach { _hasLoaded.value = true }
         .map { entities ->
             entities.map { it.toMediaDataArtist() }
                 .sortedBy { TextDisplayUtils.getSortKey(it.name) }
@@ -56,11 +63,19 @@ class ArtistsScreenViewModel @Inject constructor(
     private val _artistAlbums = MutableStateFlow<List<MediaItem>>(emptyList())
     val artistAlbums: StateFlow<List<MediaItem>> = _artistAlbums.asStateFlow()
 
+    private val _artistSongs = MutableStateFlow<List<MediaItem>>(emptyList())
+    val artistSongs: StateFlow<List<MediaItem>> = _artistSongs.asStateFlow()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _artistDetailsLoaded = MutableStateFlow(false)
+    val artistDetailsLoaded: StateFlow<Boolean> = _artistDetailsLoaded.asStateFlow()
+
+    private var selectedArtistJob: Job? = null
 
     init {
         // Load cached data instantly, sync in background (once per day)
@@ -140,18 +155,53 @@ class ArtistsScreenViewModel @Inject constructor(
         for (artist in localArtists) {
             val albums = artistRepository.getArtistAlbums(artist.navidromeID)
             for (album in albums) {
-                val albumSongs = albumRepository.getAlbum(album.mediaId) ?: emptyList()
-                songs.addAll(albumSongs.drop(1)) // Drop album header
+                val albumId = album.mediaMetadata.extras?.getString("navidromeID")
+                    ?: album.mediaId
+                val albumSongs = albumRepository.getAlbum(albumId).orEmpty()
+                songs.addAll(
+                    albumSongs.filter {
+                        it.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_ALBUM
+                    }
+                )
             }
         }
 
         return songs
     }
 
+    private suspend fun getSongsForArtist(artist: MediaData.Artist): List<MediaItem> {
+        val songs = if (artist.navidromeID.startsWith("Local_")) {
+            getSongsForArtists(listOf(artist))
+        } else {
+            songDao.getSongsByArtistIdentity(artist.navidromeID, artist.name)
+                .map { it.toMediaDataSong().toMediaItem() }
+        }
+        return songs.distinctBy { song ->
+            song.mediaMetadata.extras?.getString("navidromeID")
+                ?.takeIf { it.isNotBlank() }
+                ?: song.mediaId
+        }
+    }
+
     fun setSelectedArtist(artist: MediaData.Artist) {
+        val currentArtist = _selectedArtist.value
+        val sameArtist = currentArtist?.navidromeID == artist.navidromeID &&
+            currentArtist.name == artist.name
+        if (
+            sameArtist &&
+            (selectedArtistJob?.isActive == true ||
+                _artistAlbums.value.isNotEmpty() ||
+                _artistSongs.value.isNotEmpty())
+        ) {
+            return
+        }
+
+        selectedArtistJob?.cancel()
+        _artistDetailsLoaded.value = false
         _selectedArtist.value = artist
         _artistAlbums.value = emptyList()
-        viewModelScope.launch {
+        _artistSongs.value = emptyList()
+        selectedArtistJob = viewModelScope.launch {
             val loadingJob = launch {
                 delay(1000)
                 if (_artistAlbums.value.isEmpty()) {
@@ -159,10 +209,12 @@ class ArtistsScreenViewModel @Inject constructor(
                 }
             }
             try {
-                _artistAlbums.value = artistRepository.getArtistAlbums(
+                val albums = artistRepository.getArtistAlbums(
                     artistId = artist.navidromeID,
                     artistName = artist.name
                 )
+                _artistAlbums.value = albums
+                _artistSongs.value = getSongsForArtist(artist)
 
                 try {
                     val artistDetails = artistRepository.getArtistInfo(artist.navidromeID)
@@ -181,7 +233,17 @@ class ArtistsScreenViewModel @Inject constructor(
             } finally {
                 loadingJob.cancel()
                 _isLoading.value = false
+                _artistDetailsLoaded.value = true
             }
+        }
+    }
+
+    fun selectArtistById(artistId: String, artistName: String) {
+        if (artistId.isBlank()) return
+        viewModelScope.launch {
+            val artist = artistDao.getArtistById(artistId)?.toMediaDataArtist()
+                ?: MediaData.Artist(navidromeID = artistId, name = artistName)
+            setSelectedArtist(artist)
         }
     }
 }

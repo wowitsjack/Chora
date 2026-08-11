@@ -18,6 +18,7 @@ import com.craftworks.music.data.database.entity.AudiobookProgressEntity
 import com.craftworks.music.data.database.entity.ArtistEntity
 import com.craftworks.music.data.database.entity.DownloadEntity
 import com.craftworks.music.data.database.entity.DownloadStatus
+import com.craftworks.music.data.database.entity.HiddenSongEntity
 import com.craftworks.music.data.database.entity.MediaType
 import com.craftworks.music.data.database.entity.OfflineSongEntity
 import com.craftworks.music.data.database.entity.SongEntity
@@ -60,9 +61,10 @@ class Converters {
         DownloadEntity::class,
         OfflineSongEntity::class,
         AlbumPaletteEntity::class,
-        AudiobookProgressEntity::class
+        AudiobookProgressEntity::class,
+        HiddenSongEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

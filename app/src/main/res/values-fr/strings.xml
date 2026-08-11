@@ -92,9 +92,9 @@
     <string name="Audiobooks_Sleep">Minuteur</string>
     <string name="Home_Audiobooks_Continue">Reprendre %1$s</string>
     <string name="Home_Audiobooks_Count">%1$d livres dans votre bibliothèque</string>
-    <string name="Action_Instant_Mix">Mix instantané</string>
-    <string name="Instant_Mix_Building">Création du mix instantané…</string>
-    <string name="Instant_Mix_Error">Impossible de créer un mix instantané.</string>
+    <string name="Action_Instant_Mix">Lancer la radio</string>
+    <string name="Instant_Mix_Building">Lancement de la radio…</string>
+    <string name="Instant_Mix_Error">Impossible de lancer la radio.</string>
     <string name="Queue_Empty_Title">Votre file d’attente est vide</string>
     <string name="Queue_Empty_Description">Ajoutez un titre, lancez un mix instantané ou créez une playlist depuis l’accueil.</string>
     <string name="Queue_Remove_Item">Retirer %1$s de la file</string>

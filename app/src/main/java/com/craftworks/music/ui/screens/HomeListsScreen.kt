@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +15,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
@@ -25,6 +28,10 @@ import com.craftworks.music.R
 import com.craftworks.music.data.model.Screen
 import com.craftworks.music.ui.elements.AlbumGrid
 import com.craftworks.music.ui.viewmodels.HomeScreenViewModel
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
+import com.craftworks.music.player.SongHelper
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,6 +44,9 @@ fun HomeListsScreen(
     navHostController: NavHostController = rememberNavController(),
     mediaController: MediaController? = null
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val songActionsViewModel: SongActionsViewModel = hiltViewModel()
     val titleRes = when (categoryKey) {
         "recently_played" -> R.string.recently_played
         "recently_added" -> R.string.recently_added
@@ -78,7 +88,23 @@ fun HomeListsScreen(
                         launchSingleTop = true
                     }
                 },
-                onGetAlbum = { viewModel.getAlbumSongs(it) }
+                onGetAlbum = { viewModel.getAlbumSongs(it) },
+                onStartRadio = { album ->
+                    coroutineScope.launch {
+                        Toast.makeText(context, "Starting album radio…", Toast.LENGTH_SHORT).show()
+                        val albumId = album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId
+                        val seeds = viewModel.getAlbumSongs(albumId).drop(1)
+                        val mix = runCatching {
+                            songActionsViewModel.buildRadio(seeds)
+                        }.getOrDefault(emptyList())
+                        if (mix.isNotEmpty()) {
+                            SongHelper.play(mix, 0, mediaController)
+                        } else {
+                            Toast.makeText(context, "Couldn’t start album radio", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                showAlphabetScroller = false
             )
         }
     }

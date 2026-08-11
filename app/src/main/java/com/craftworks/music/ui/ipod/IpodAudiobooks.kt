@@ -36,12 +36,17 @@ import com.craftworks.music.data.repository.AudiobookBook
 @Composable
 internal fun IpodAudiobooksScreen(
     books: List<AudiobookBook>,
+    loading: Boolean,
     currentMediaId: String?,
     onBookClick: (AudiobookBook) -> Unit,
     onResume: (AudiobookBook) -> Unit
 ) {
     if (books.isEmpty()) {
-        IpodMessage("No Audiobooks", "Enable an audiobook library in Chora, then sync.")
+        if (loading) {
+            IpodMessage("Loading…", "Reading books from your library.")
+        } else {
+            IpodMessage("No Audiobooks", "Enable an audiobook library in Chora, then sync.")
+        }
         return
     }
 
@@ -100,7 +105,7 @@ private fun IpodAudiobookRow(
 ) {
     val metadata = book.album.mediaMetadata
     val title = metadata.title?.toString() ?: metadata.albumTitle?.toString() ?: "Untitled Book"
-    val author = metadata.artist?.toString() ?: metadata.albumArtist?.toString().orEmpty()
+    val author = metadata.artist?.toString().orEmpty()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -165,7 +170,7 @@ internal fun IpodAudiobookDetail(
 ) {
     val metadata = book.album.mediaMetadata
     val title = metadata.title?.toString() ?: metadata.albumTitle?.toString() ?: "Untitled Book"
-    val author = metadata.artist?.toString() ?: metadata.albumArtist?.toString().orEmpty()
+    val author = metadata.artist?.toString().orEmpty()
     var speedDialogOpen by remember { mutableStateOf(false) }
     var sleepDialogOpen by remember { mutableStateOf(false) }
 

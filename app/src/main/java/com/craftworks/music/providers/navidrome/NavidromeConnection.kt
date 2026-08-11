@@ -79,6 +79,14 @@ data class SubsonicResponse(
 
     // Similar Songs
     val similarSongs2: RandomSongs? = null,
+
+    // Analyzer-powered discovery
+    val smartMix: SmartMixResponse? = null,
+    val trackAnalysis: DiscoveryTrackAnalysis? = null,
+    val discoveryStatus: DiscoveryStatusResponse? = null,
+
+    // On-demand Demucs separation
+    val stemSplit: StemSplitResponse? = null,
 )
 
 @Serializable

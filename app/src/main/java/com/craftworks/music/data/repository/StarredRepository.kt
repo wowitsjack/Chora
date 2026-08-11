@@ -62,7 +62,7 @@ class StarredRepository @Inject constructor(
         deferredStarred.awaitAll().flatten()
     }
 
-    suspend fun starItem(itemId: String, ignoreCachedResponse: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun starItem(itemId: String, ignoreCachedResponse: Boolean): Boolean = withContext(Dispatchers.IO) {
         if (!itemId.startsWith("Local_")) {
             try {
                 val success = navidromeDataSource.starNavidromeItem(itemId, ignoreCachedResponse)
@@ -79,15 +79,18 @@ class StarredRepository @Inject constructor(
                     albumDao.updateStarred(itemId, starredTimestamp)
                     artistDao.updateStarred(itemId, starredTimestamp)
                 }
+                success
             } catch (e: Exception) {
                 Log.e("StarredRepository", "Failed to star item $itemId", e)
+                false
             }
         } else {
             localDataSource.starLocalItem(itemId)
+            true
         }
     }
 
-    suspend fun unStarItem(itemId: String, ignoreCachedResponse: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun unStarItem(itemId: String, ignoreCachedResponse: Boolean): Boolean = withContext(Dispatchers.IO) {
         if (!itemId.startsWith("Local_")) {
             try {
                 val success = navidromeDataSource.unstarNavidromeItem(itemId, ignoreCachedResponse)
@@ -97,11 +100,14 @@ class StarredRepository @Inject constructor(
                     albumDao.updateStarred(itemId, null)
                     artistDao.updateStarred(itemId, null)
                 }
+                success
             } catch (e: Exception) {
                 Log.e("StarredRepository", "Failed to unstar item $itemId", e)
+                false
             }
         } else {
             localDataSource.unstarLocalItem(itemId)
+            true
         }
     }
 }

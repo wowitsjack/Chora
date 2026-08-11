@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.ipod
 
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -68,6 +69,9 @@ import androidx.media3.session.MediaController
 import com.craftworks.music.R
 import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.player.SongHelper
+import com.craftworks.music.player.stablePlaybackPosition
+import com.craftworks.music.ui.elements.PLAYER_CARD_ARTWORK_DEBOUNCE_MS
+import com.craftworks.music.ui.playing.stemMixerSongId
 import kotlinx.coroutines.delay
 
 internal data class IpodPlaybackState(
@@ -112,12 +116,48 @@ internal fun calculateIpodNowPlayingMediaGeometry(
 internal fun rememberIpodPlaybackState(controller: MediaController?): IpodPlaybackState {
     val logicalQueue by SongHelper.currentTracklistFlow.collectAsStateWithLifecycle()
     var state by remember(controller) { mutableStateOf(controller.toIpodPlaybackState()) }
+    var lastPositionSampleAt by remember(controller) {
+        mutableStateOf(SystemClock.elapsedRealtime())
+    }
 
     DisposableEffect(controller) {
         if (controller == null) return@DisposableEffect onDispose { }
         val listener = object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
+                val reported = controller.toIpodPlaybackState()
+                val now = SystemClock.elapsedRealtime()
+                state = reported.copy(
+                    positionMs = stablePlaybackPosition(
+                        previousPositionMs = state.positionMs,
+                        reportedPositionMs = reported.positionMs,
+                        elapsedMs = now - lastPositionSampleAt,
+                        isPlaying = reported.isPlaying,
+                        durationMs = reported.durationMs
+                    )
+                )
+                lastPositionSampleAt = now
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                if (
+                    reason == Player.DISCONTINUITY_REASON_SEEK ||
+                    reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT ||
+                    reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION
+                ) {
+                    state = controller.toIpodPlaybackState().copy(
+                        positionMs = newPosition.positionMs.coerceAtLeast(0L)
+                    )
+                    lastPositionSampleAt = SystemClock.elapsedRealtime()
+                }
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 state = controller.toIpodPlaybackState()
+                lastPositionSampleAt = SystemClock.elapsedRealtime()
             }
         }
         controller.addListener(listener)
@@ -128,7 +168,18 @@ internal fun rememberIpodPlaybackState(controller: MediaController?): IpodPlayba
     LaunchedEffect(controller, state.isPlaying, state.currentItem?.mediaId) {
         if (controller == null) return@LaunchedEffect
         do {
-            state = controller.toIpodPlaybackState()
+            val reported = controller.toIpodPlaybackState()
+            val now = SystemClock.elapsedRealtime()
+            state = reported.copy(
+                positionMs = stablePlaybackPosition(
+                    previousPositionMs = state.positionMs,
+                    reportedPositionMs = reported.positionMs,
+                    elapsedMs = now - lastPositionSampleAt,
+                    isPlaying = reported.isPlaying,
+                    durationMs = reported.durationMs
+                )
+            )
+            lastPositionSampleAt = now
             if (state.isPlaying) delay(500L)
         } while (state.isPlaying)
     }
@@ -168,6 +219,7 @@ private fun MediaController?.toIpodPlaybackState(): IpodPlaybackState {
 @Composable
 internal fun IpodNowPlaying(
     state: IpodPlaybackState,
+    isFavorite: Boolean,
     onBack: () -> Unit,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
@@ -179,7 +231,9 @@ internal fun IpodNowPlaying(
     onToggleShuffle: () -> Unit,
     onCycleRepeat: () -> Unit,
     onVolumeChange: (Float) -> Unit,
-    onShowQueue: () -> Unit
+    onShowQueue: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onOpenStemMixer: () -> Unit
 ) {
     val item = state.currentItem
     val metadata = item?.mediaMetadata
@@ -289,12 +343,16 @@ internal fun IpodNowPlaying(
                     onSeek = onSeek,
                     onCycleRepeat = onCycleRepeat,
                     onShowQueue = onShowQueue,
+                    isFavorite = isFavorite,
+                    onToggleFavorite = onToggleFavorite,
                     onToggleShuffle = onToggleShuffle,
                     isAudiobook = isAudiobook,
                     onSeekBack = onSeekBack,
                     onSeekForward = onSeekForward,
                     onSpeed = { showSpeedDialog = true },
                     onSleepTimer = { showSleepDialog = true },
+                    stemMixerEnabled = stemMixerSongId(metadata) != null,
+                    onOpenStemMixer = onOpenStemMixer,
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
             }
@@ -411,6 +469,7 @@ internal fun IpodMiniPlayer(
                 title = metadata.title?.toString() ?: "Unknown Song",
                 artist = metadata.artist?.toString(),
                 identity = metadata.extras?.getString("navidromeID") ?: item.mediaId,
+                requestDelayMillis = PLAYER_CARD_ARTWORK_DEBOUNCE_MS,
                 modifier = Modifier
                     .size(44.dp)
                     .border(1.dp, Color(0xFF616161))
@@ -560,12 +619,16 @@ private fun IpodTimingControls(
     onSeek: (Long) -> Unit,
     onCycleRepeat: () -> Unit,
     onShowQueue: () -> Unit,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
     onToggleShuffle: () -> Unit,
     isAudiobook: Boolean,
     onSeekBack: () -> Unit,
     onSeekForward: () -> Unit,
     onSpeed: () -> Unit,
     onSleepTimer: () -> Unit,
+    stemMixerEnabled: Boolean,
+    onOpenStemMixer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -651,6 +714,26 @@ private fun IpodTimingControls(
                     contentDescription = "Show queue",
                     selected = false,
                     onClick = onShowQueue
+                )
+                IpodClassicModeButton(
+                    icon = ImageVector.vectorResource(
+                        if (isFavorite) R.drawable.round_star_24
+                        else R.drawable.round_star_border_24
+                    ),
+                    contentDescription = if (isFavorite) {
+                        "Remove from Favorites"
+                    } else {
+                        "Add to Favorites"
+                    },
+                    selected = isFavorite,
+                    onClick = onToggleFavorite
+                )
+                IpodClassicModeButton(
+                    icon = ImageVector.vectorResource(R.drawable.rounded_tune_24),
+                    contentDescription = "Open stem mixer",
+                    selected = false,
+                    enabled = stemMixerEnabled,
+                    onClick = onOpenStemMixer
                 )
                 IpodClassicModeButton(
                     icon = ImageVector.vectorResource(R.drawable.rounded_shuffle_24),
@@ -870,6 +953,7 @@ private fun IpodClassicModeButton(
     icon: ImageVector,
     contentDescription: String,
     selected: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -881,6 +965,7 @@ private fun IpodClassicModeButton(
             .clip(RoundedCornerShape(4.dp))
             .background(if (pressed) Color.White.copy(alpha = 0.11f) else Color.Transparent)
             .clickable(
+                enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
                 role = Role.Button,
@@ -890,7 +975,11 @@ private fun IpodClassicModeButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = if (selected) Color(0xFF55BFF2) else Color.White.copy(alpha = 0.82f),
+            tint = when {
+                !enabled -> Color.White.copy(alpha = 0.28f)
+                selected -> Color(0xFF55BFF2)
+                else -> Color.White.copy(alpha = 0.82f)
+            },
             modifier = Modifier.size(23.dp)
         )
     }

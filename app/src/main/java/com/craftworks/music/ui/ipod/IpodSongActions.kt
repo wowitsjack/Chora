@@ -97,13 +97,18 @@ internal fun IpodSleepTimerDialog(onDismiss: () -> Unit) {
 @Composable
 internal fun IpodSongActionsDialog(
     song: MediaItem,
-    instantMixEnabled: Boolean,
+    isFavorite: Boolean,
+    favoriteEnabled: Boolean,
+    radioEnabled: Boolean,
     downloadEnabled: Boolean,
+    stemMixerEnabled: Boolean,
     onDismiss: () -> Unit,
+    onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit,
     onAddToQueueTop: () -> Unit,
     onAddToQueueBottom: () -> Unit,
-    onInstantMix: () -> Unit,
+    onStartRadio: () -> Unit,
+    onOpenStemMixer: () -> Unit,
     onDownload: () -> Unit
 ) {
     IpodBottomDialog(onDismiss = onDismiss) {
@@ -120,18 +125,64 @@ internal fun IpodSongActionsDialog(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         )
+        IpodActionSheetButton(
+            label = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+            enabled = favoriteEnabled,
+            onClick = onToggleFavorite
+        )
         IpodActionSheetButton("Add to Playlist", onClick = onAddToPlaylist)
         IpodActionSheetButton("Add to Top of Queue", onClick = onAddToQueueTop)
         IpodActionSheetButton("Add to Bottom of Queue", onClick = onAddToQueueBottom)
         IpodActionSheetButton(
-            label = "Instant Mix",
-            enabled = instantMixEnabled,
-            onClick = onInstantMix
+            label = "Start Radio",
+            enabled = radioEnabled,
+            onClick = onStartRadio
+        )
+        IpodActionSheetButton(
+            label = "Stem Mixer",
+            enabled = stemMixerEnabled,
+            onClick = onOpenStemMixer
         )
         IpodActionSheetButton(
             label = "Download",
             enabled = downloadEnabled,
             onClick = onDownload
+        )
+        IpodActionSheetButton(
+            label = "Cancel",
+            emphasized = true,
+            onClick = onDismiss,
+            modifier = Modifier.padding(top = 7.dp)
+        )
+    }
+}
+
+@Composable
+internal fun IpodEntityRadioDialog(
+    title: String,
+    entityLabel: String,
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    onStartRadio: () -> Unit
+) {
+    IpodBottomDialog(onDismiss = onDismiss) {
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 16.sp,
+            lineHeight = 19.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        )
+        IpodActionSheetButton(
+            label = "Start $entityLabel Radio",
+            enabled = enabled,
+            onClick = onStartRadio
         )
         IpodActionSheetButton(
             label = "Cancel",

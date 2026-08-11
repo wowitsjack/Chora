@@ -11,11 +11,15 @@ import com.craftworks.music.data.repository.SyncRepository
 import com.craftworks.music.managers.DataRefreshManager
 import com.craftworks.music.ui.util.TextDisplayUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -27,9 +31,13 @@ class SongsScreenViewModel @Inject constructor(
     private val songDao: SongDao
 ) : ViewModel() {
 
+    private val _hasLoaded = MutableStateFlow(false)
+    val hasLoaded: StateFlow<Boolean> = _hasLoaded.asStateFlow()
+
     // Observe Room database directly for instant UI updates
     // Sort using TextDisplayUtils.getSortKey to handle leading quotes/punctuation properly
     val allSongs: StateFlow<List<MediaItem>> = songDao.getAllSongs()
+        .onEach { _hasLoaded.value = true }
         .map { entities ->
             entities.map { it.toMediaDataSong().toMediaItem() }
                 .sortedBy { TextDisplayUtils.getSortKey(it.mediaMetadata.title?.toString()) }
@@ -42,6 +50,8 @@ class SongsScreenViewModel @Inject constructor(
 
     private val _searchResults = MutableStateFlow<List<MediaItem>>(emptyList())
     val searchResults: StateFlow<List<MediaItem>> = _searchResults.asStateFlow()
+    private var searchJob: Job? = null
+    private var latestSearchQuery = ""
 
     val isLoading: StateFlow<Boolean> = syncRepository.isSyncing
 
@@ -92,14 +102,21 @@ class SongsScreenViewModel @Inject constructor(
     }
 
     fun search(query: String) {
+        latestSearchQuery = query
+        searchJob?.cancel()
         if (query.isBlank()) {
             _searchResults.value = emptyList()
             return
         }
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
             try {
-                _searchResults.value = songRepository.searchSongs(query)
+                delay(200)
+                val results = songRepository.searchSongs(query)
+                if (latestSearchQuery == query) {
+                    _searchResults.value = results
+                }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             }
         }

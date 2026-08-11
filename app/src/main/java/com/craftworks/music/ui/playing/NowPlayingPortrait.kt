@@ -40,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -53,14 +52,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
-import coil.compose.SubcomposeAsyncImage
-import coil.request.CachePolicy
-import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.data.model.MediaCategory
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
-import com.craftworks.music.managers.settings.ArtworkSettingsManager
-import com.craftworks.music.ui.elements.GeneratedAlbumArt
 import com.craftworks.music.ui.util.LayoutMode
 import com.craftworks.music.ui.util.TextDisplayUtils
 import com.craftworks.music.ui.util.rememberFoldableState
@@ -77,7 +71,9 @@ import com.gigamole.composefadingedges.marqueeHorizontalFadingEdges
 fun NowPlayingPortrait(
     mediaController: MediaController? = null,
     iconColor: Color = Color.Black,
-    metadata: MediaMetadata? = null
+    metadata: MediaMetadata? = null,
+    onOpenStemMixer: () -> Unit = {},
+    overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit = { _, _ -> }
 ) {
     val iconTextColor by animateColorAsState(
         targetValue = iconColor,
@@ -87,15 +83,10 @@ fun NowPlayingPortrait(
 
     val context = LocalContext.current
     val settingsManager = remember { AppearanceSettingsManager(context) }
-    val artworkSettingsManager = remember { ArtworkSettingsManager(context) }
     val showMoreInfo by settingsManager.showMoreInfoFlow.collectAsStateWithLifecycle(true)
     val titleAlignment by settingsManager.nowPlayingTitleAlignment.collectAsStateWithLifecycle(NowPlayingTitleAlignment.LEFT)
     val stripTrackNumbers by settingsManager.stripTrackNumbersFromTitlesFlow.collectAsStateWithLifecycle(false)
     val isAudiobook = metadata?.extras?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
-
-    // Artwork settings for generated art fallback
-    val generatedArtworkEnabled by artworkSettingsManager.generatedArtworkEnabledFlow.collectAsStateWithLifecycle(true)
-    val fallbackMode by artworkSettingsManager.fallbackModeFlow.collectAsStateWithLifecycle(ArtworkSettingsManager.FallbackMode.PLACEHOLDER_DETECT)
 
     // Responsive sizing based on screen size
     // On unfolded/large screens, keep elements constrained to fit the card
@@ -142,77 +133,17 @@ fun NowPlayingPortrait(
                     PaddingValues(horizontal = 32.dp)
                 )
             } else {
-                Crossfade(
-                    targetState = metadata?.artworkUri.toString().replace("size=128", "size=500"),
-                    animationSpec = tween(durationMillis = 500),
-                    label = "Crossfade between album art"
-                ) { artworkUri ->
-                    val hasArtwork = artworkUri.isNotEmpty() && artworkUri != "null"
-                    val artworkIdentity = metadata?.extras?.getString("navidromeID")
-                        ?: metadata?.albumTitle?.toString()
-                        ?: metadata?.title?.toString()
-
-                    // Check if we should use generated art based on fallback mode
-                    val useGeneratedArt = when {
-                        !generatedArtworkEnabled -> false
-                        fallbackMode == ArtworkSettingsManager.FallbackMode.ALWAYS -> true
-                        !hasArtwork -> true
-                        fallbackMode == ArtworkSettingsManager.FallbackMode.PLACEHOLDER_DETECT -> {
-                            // Detect Navidrome placeholder patterns
-                            artworkUri.contains("placeholder") ||
-                            artworkUri.endsWith("/coverArt") ||
-                            artworkUri.contains("coverArt?id=&") ||
-                            (artworkUri.contains("coverArt?size=") && !artworkUri.contains("id="))
-                        }
-                        else -> false
-                    }
-
-                    if (useGeneratedArt) {
-                        GeneratedAlbumArt(
-                            title = metadata?.title?.toString() ?: "?",
-                            artist = metadata?.artist?.toString(),
-                            album = artworkIdentity,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 32.dp)
-                                .aspectRatio(1f)
-                                .shadow(4.dp, RoundedCornerShape(24.dp))
-                                .clip(RoundedCornerShape(24.dp)),
-                            size = 400.dp,
-                            animate = true
-                        )
-                    } else {
-                        SubcomposeAsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(artworkUri)
-                                .diskCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                                .memoryCacheKey("np_${metadata?.extras?.getString("navidromeID")}_500")
-                                .build(),
-                            contentDescription = "Album Cover Art",
-                            contentScale = ContentScale.Crop,
-                            alignment = Alignment.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 32.dp)
-                                .aspectRatio(1f)
-                                .shadow(4.dp, RoundedCornerShape(24.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clip(RoundedCornerShape(24.dp)),
-                            error = {
-                                if (generatedArtworkEnabled) {
-                                    GeneratedAlbumArt(
-                                        title = metadata?.title?.toString() ?: "?",
-                                        artist = metadata?.artist?.toString(),
-                                        album = artworkIdentity,
-                                        modifier = Modifier.fillMaxSize(),
-                                        size = 400.dp,
-                                        animate = true
-                                    )
-                                }
-                            }
-                        )
-                    }
-                }
+                NowPlayingArtwork(
+                    metadata = metadata,
+                    targetSize = 1024,
+                    crossfade = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp)
+                        .aspectRatio(1f)
+                        .shadow(4.dp, RoundedCornerShape(24.dp))
+                        .clip(RoundedCornerShape(24.dp))
+                )
             }
         }
 
@@ -383,11 +314,21 @@ fun NowPlayingPortrait(
                 } else {
                     LyricsButton(iconTextColor, secondaryButtonSize)
 
-                    FavoriteButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
+                    FavoriteButton(
+                        iconTextColor,
+                        secondaryButtonSize,
+                        metadata,
+                        metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
+                            metadata?.extras?.getString("navidromeID") != null
+                    )
 
                     DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
 
+                    StemMixerButton(iconTextColor, secondaryButtonSize, metadata, onOpenStemMixer)
+
                     PlayQueueButton(iconTextColor, secondaryButtonSize)
+
+                    overflowMenu(iconTextColor, secondaryButtonSize)
                 }
             }
         }

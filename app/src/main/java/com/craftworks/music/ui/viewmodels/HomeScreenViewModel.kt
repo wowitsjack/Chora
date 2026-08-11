@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import com.craftworks.music.data.repository.AlbumRepository
 import com.craftworks.music.data.repository.SongRepository
+import com.craftworks.music.data.model.DiscoveryMixMode
 import com.craftworks.music.managers.DataRefreshManager
 import com.craftworks.music.managers.NavidromeManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -116,17 +117,20 @@ class HomeScreenViewModel @Inject constructor(
         return albumRepository.getAlbum(albumId) ?: emptyList()
     }
 
-    fun buildDiscoveryMix() {
+    fun buildDiscoveryMix(
+		mode: DiscoveryMixMode = DiscoveryMixMode.SMART,
+		intent: String = ""
+	) {
         if (_discoveryMixState.value is DiscoveryMixState.Loading) return
 
         viewModelScope.launch {
             _discoveryMixState.value = DiscoveryMixState.Loading
             try {
-                val songs = songRepository.getDiscoveryMix(DISCOVERY_MIX_SIZE)
+				val songs = songRepository.getDiscoveryMix(DISCOVERY_MIX_SIZE, mode, intent = intent)
                 _discoveryMixState.value = if (songs.isEmpty()) {
                     DiscoveryMixState.Empty
                 } else {
-                    DiscoveryMixState.Ready(songs)
+                    DiscoveryMixState.Ready(songs, mode)
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -150,7 +154,10 @@ class HomeScreenViewModel @Inject constructor(
 sealed interface DiscoveryMixState {
     data object Idle : DiscoveryMixState
     data object Loading : DiscoveryMixState
-    data class Ready(val songs: List<MediaItem>) : DiscoveryMixState
+    data class Ready(
+        val songs: List<MediaItem>,
+        val mode: DiscoveryMixMode = DiscoveryMixMode.SMART
+    ) : DiscoveryMixState
     data object Empty : DiscoveryMixState
     data object Error : DiscoveryMixState
 }

@@ -6,7 +6,6 @@ import com.craftworks.music.data.datasource.lrclib.LrclibDataSource
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import com.craftworks.music.data.model.Lyric
 import com.craftworks.music.managers.NavidromeManager
-import com.craftworks.music.ui.playing.lyricsOpen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,11 +14,17 @@ import javax.inject.Singleton
 
 object LyricsState {
     val lyrics = MutableStateFlow<List<Lyric>>(emptyList())
+    val isLoading = MutableStateFlow(false)
     private val _useLrcLib = MutableStateFlow(true)
     val useLrcLib: StateFlow<Boolean> = _useLrcLib.asStateFlow()
 
     fun setUseLrcLib(value: Boolean) {
         _useLrcLib.value = value
+    }
+
+    fun clear() {
+        isLoading.value = false
+        lyrics.value = emptyList()
     }
 }
 
@@ -35,7 +40,6 @@ class LyricsRepository @Inject constructor(
 
         if (metadata?.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
             LyricsState.lyrics.value = listOf()
-            lyricsOpen = false
             return
         }
 
@@ -78,8 +82,6 @@ class LyricsRepository @Inject constructor(
         }
 
         Log.d("LYRICS", "Didn't find any lyrics.")
-        // Hide lyrics panel if we cannot find lyrics.
-        lyricsOpen = false
         LyricsState.lyrics.value = listOf()
     }
 }

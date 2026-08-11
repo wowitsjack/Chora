@@ -117,7 +117,6 @@ import java.util.Locale
 import kotlin.system.exitProcess
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
-import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -140,6 +139,13 @@ val LocalFoldingFeatures = staticCompositionLocalOf<List<FoldingFeature>> {
 
 var showNoProviderDialog = mutableStateOf(false)
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+
+internal fun shouldUseNowPlayingBottomSheet(
+    isTv: Boolean,
+    isTableTopMode: Boolean,
+    isLandscape: Boolean,
+    showOnboarding: Boolean
+): Boolean = !isTv && !isTableTopMode && !isLandscape && !showOnboarding
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -255,7 +261,12 @@ class MainActivity : ComponentActivity() {
                     val listener = object : Player.Listener {
                         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                             super.onMediaItemTransition(mediaItem, reason)
-                            metadata = mediaController?.currentMediaItem?.mediaMetadata
+                            metadata = mediaItem?.mediaMetadata
+                        }
+
+                        override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                            super.onMediaMetadataChanged(mediaMetadata)
+                            metadata = mediaMetadata
                         }
                     }
 
@@ -275,11 +286,15 @@ class MainActivity : ComponentActivity() {
 
                 // Compute layout mode variables early so they can be used for scaffoldState keying
                 val configuration = LocalConfiguration.current
-                val isCompactWidth = windowSizeClass.widthSizeClass == WindowWidthSizeClass.Compact
                 val isTV = configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
                 val isTableTopMode = foldingFeatures.any { it.state == FoldingFeature.State.HALF_OPENED && it.orientation == FoldingFeature.Orientation.HORIZONTAL }
-                // Show bottom sheet on all non-TV devices (including foldables when unfolded)
-                val useBottomSheet = !isTV && !isTableTopMode && !showOnboarding
+                val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val useBottomSheet = shouldUseNowPlayingBottomSheet(
+                    isTv = isTV,
+                    isTableTopMode = isTableTopMode,
+                    isLandscape = isLandscape,
+                    showOnboarding = showOnboarding
+                )
 
                 // Key scaffoldState on useBottomSheet to reset sheet state when switching
                 // between bottom sheet layout and non-bottom-sheet layout (e.g., fold/unfold)
@@ -351,9 +366,10 @@ class MainActivity : ComponentActivity() {
                                     label = "topGapAnimation"
                                 )
 
-                                // Animated horizontal padding - 4dp always to match navbar
+                                // Keep the collapsed player flush with the viewport so the
+                                // transparent sheet does not expose dark side gutters.
                                 val horizontalPadding by animateDpAsState(
-                                    targetValue = 4.dp,
+                                    targetValue = if (isExpanded) 4.dp else 0.dp,
                                     animationSpec = tween(300),
                                     label = "horizontalPaddingAnimation"
                                 )
@@ -374,7 +390,17 @@ class MainActivity : ComponentActivity() {
                                 ) {
                                     NowPlayingContent(
                                         mediaController = mediaController,
-                                        metadata = metadata
+                                        metadata = metadata,
+                                        onGoToArtist = { artistId, artistName ->
+                                            navController.navigate(
+                                                "${Screen.ArtistDetails.route}?artistId=${android.net.Uri.encode(artistId)}&artistName=${android.net.Uri.encode(artistName)}"
+                                            )
+                                        },
+                                        onGoToAlbum = { albumId ->
+                                            navController.navigate(
+                                                "${Screen.AlbumDetails.route}/${android.net.Uri.encode(albumId)}?image="
+                                            )
+                                        }
                                     )
 
                                     // Drag handle on top of card - only when expanded
@@ -425,10 +451,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }) {
-                            // Don't add peekHeight - let content scroll behind transparent miniplayer
                             SetupNavGraph(
                                 navController,
-                                paddingValues.calculateBottomPadding(),
+                                paddingValues.calculateBottomPadding() + peekHeight,
                                 mediaController,
                                 showOnboarding
                             )

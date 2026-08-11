@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +44,48 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+internal val alphabetScrollerLetters = listOf('#') + ('A'..'Z').toList() + listOf('?')
+
+internal fun alphabetLetterIndex(y: Float, height: Int, letterCount: Int): Int {
+    if (height <= 0 || letterCount <= 1) return 0
+    return (y / (height.toFloat() / letterCount))
+        .toInt()
+        .coerceIn(0, letterCount - 1)
+}
+
+internal fun <T> alphabetTargetIndex(
+    items: List<T>,
+    requestedLetter: Char,
+    getSectionLetter: (T) -> Char
+): Int {
+    fun section(item: T): Char = getSectionLetter(item).uppercaseChar()
+    fun exactIndex(letter: Char): Int = items.indexOfFirst { section(it) == letter }
+
+    exactIndex(requestedLetter).takeIf { it >= 0 }?.let { return it }
+    if (items.isEmpty()) return -1
+
+    if (requestedLetter in 'A'..'Z') {
+        items.indexOfFirst { item ->
+            section(item).let { it in 'A'..'Z' && it > requestedLetter }
+        }.takeIf { it >= 0 }?.let { return it }
+
+        val previousLetter = items.asReversed()
+            .firstNotNullOfOrNull { item ->
+                section(item).takeIf { it in 'A' until requestedLetter }
+            }
+        if (previousLetter != null) return exactIndex(previousLetter)
+    }
+
+    return when (requestedLetter) {
+        '#' -> 0
+        '?' -> items.lastIndex
+        else -> -1
+    }
+}
 
 /**
  * iPod-style alphabet fast scroller for grids
@@ -55,7 +97,7 @@ fun <T> AlphabetFastScroller(
     gridState: LazyGridState,
     modifier: Modifier = Modifier
 ) {
-    val letters = listOf('#') + ('A'..'Z').toList() + listOf('?')
+    val letters = alphabetScrollerLetters
     val coroutineScope = rememberCoroutineScope()
 
     // Track current visible letter based on scroll position
@@ -68,22 +110,31 @@ fun <T> AlphabetFastScroller(
 
     var showBubble by remember { mutableStateOf(false) }
     var selectedLetter by remember { mutableStateOf<Char?>(null) }
+    var dragging by remember { mutableStateOf(false) }
+    var scrollJob by remember { mutableStateOf<Job?>(null) }
+
+    LaunchedEffect(showBubble, dragging, selectedLetter) {
+        if (showBubble && !dragging) {
+            delay(450)
+            showBubble = false
+        }
+    }
 
     // Helper to scroll to letter
     fun scrollToLetter(letter: Char) {
-        val targetIndex = items.indexOfFirst { item ->
-            val itemLetter = getSectionLetter(item).uppercaseChar()
-            when (letter) {
-                '#' -> !itemLetter.isLetter() && itemLetter != '?'
-                '?' -> itemLetter == '?'
-                else -> itemLetter == letter
-            }
-        }
+        val targetIndex = alphabetTargetIndex(items, letter, getSectionLetter)
         if (targetIndex >= 0) {
-            coroutineScope.launch {
-                gridState.animateScrollToItem(targetIndex)
+            scrollJob?.cancel()
+            scrollJob = coroutineScope.launch {
+                gridState.scrollToItem(targetIndex)
             }
         }
+    }
+
+    fun selectLetter(y: Float, height: Int) {
+        val letter = letters[alphabetLetterIndex(y, height, letters.size)]
+        selectedLetter = letter
+        scrollToLetter(letter)
     }
 
     Box(modifier = modifier.fillMaxHeight()) {
@@ -96,26 +147,29 @@ fun <T> AlphabetFastScroller(
                 .padding(vertical = 4.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
-                        onDragStart = { showBubble = true },
-                        onDragEnd = { showBubble = false },
-                        onDragCancel = { showBubble = false },
+                        onDragStart = { offset ->
+                            dragging = true
+                            showBubble = true
+                            selectLetter(offset.y, size.height)
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            showBubble = false
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            showBubble = false
+                        },
                         onVerticalDrag = { change, _ ->
-                            val letterIndex = (change.position.y / (size.height.toFloat() / letters.size))
-                                .toInt().coerceIn(0, letters.lastIndex)
-                            val letter = letters[letterIndex]
-                            selectedLetter = letter
-                            scrollToLetter(letter)
+                            selectLetter(change.position.y, size.height)
                         }
                     )
                 }
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        val letterIndex = (offset.y / (size.height.toFloat() / letters.size))
-                            .toInt().coerceIn(0, letters.lastIndex)
-                        val letter = letters[letterIndex]
-                        selectedLetter = letter
+                        dragging = false
                         showBubble = true
-                        scrollToLetter(letter)
+                        selectLetter(offset.y, size.height)
                     }
                 },
             verticalArrangement = Arrangement.SpaceBetween,
@@ -173,7 +227,7 @@ fun <T> AlphabetFastScrollerList(
     listState: LazyListState,
     modifier: Modifier = Modifier
 ) {
-    val letters = listOf('#') + ('A'..'Z').toList() + listOf('?')
+    val letters = alphabetScrollerLetters
     val coroutineScope = rememberCoroutineScope()
 
     val currentLetter by remember(items) {
@@ -185,21 +239,30 @@ fun <T> AlphabetFastScrollerList(
 
     var showBubble by remember { mutableStateOf(false) }
     var selectedLetter by remember { mutableStateOf<Char?>(null) }
+    var dragging by remember { mutableStateOf(false) }
+    var scrollJob by remember { mutableStateOf<Job?>(null) }
+
+    LaunchedEffect(showBubble, dragging, selectedLetter) {
+        if (showBubble && !dragging) {
+            delay(450)
+            showBubble = false
+        }
+    }
 
     fun scrollToLetter(letter: Char) {
-        val targetIndex = items.indexOfFirst { item ->
-            val itemLetter = getSectionLetter(item).uppercaseChar()
-            when (letter) {
-                '#' -> !itemLetter.isLetter() && itemLetter != '?'
-                '?' -> itemLetter == '?'
-                else -> itemLetter == letter
-            }
-        }
+        val targetIndex = alphabetTargetIndex(items, letter, getSectionLetter)
         if (targetIndex >= 0) {
-            coroutineScope.launch {
-                listState.animateScrollToItem(targetIndex)
+            scrollJob?.cancel()
+            scrollJob = coroutineScope.launch {
+                listState.scrollToItem(targetIndex)
             }
         }
+    }
+
+    fun selectLetter(y: Float, height: Int) {
+        val letter = letters[alphabetLetterIndex(y, height, letters.size)]
+        selectedLetter = letter
+        scrollToLetter(letter)
     }
 
     Box(modifier = modifier.fillMaxHeight()) {
@@ -211,26 +274,29 @@ fun <T> AlphabetFastScrollerList(
                 .padding(vertical = 4.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
-                        onDragStart = { showBubble = true },
-                        onDragEnd = { showBubble = false },
-                        onDragCancel = { showBubble = false },
+                        onDragStart = { offset ->
+                            dragging = true
+                            showBubble = true
+                            selectLetter(offset.y, size.height)
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            showBubble = false
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            showBubble = false
+                        },
                         onVerticalDrag = { change, _ ->
-                            val letterIndex = (change.position.y / (size.height.toFloat() / letters.size))
-                                .toInt().coerceIn(0, letters.lastIndex)
-                            val letter = letters[letterIndex]
-                            selectedLetter = letter
-                            scrollToLetter(letter)
+                            selectLetter(change.position.y, size.height)
                         }
                     )
                 }
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        val letterIndex = (offset.y / (size.height.toFloat() / letters.size))
-                            .toInt().coerceIn(0, letters.lastIndex)
-                        val letter = letters[letterIndex]
-                        selectedLetter = letter
+                        dragging = false
                         showBubble = true
-                        scrollToLetter(letter)
+                        selectLetter(offset.y, size.height)
                     }
                 },
             verticalArrangement = Arrangement.SpaceBetween,

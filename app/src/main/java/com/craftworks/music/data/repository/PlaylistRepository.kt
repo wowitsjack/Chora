@@ -61,6 +61,11 @@ class PlaylistRepository @Inject constructor(
         }
     }
 
+    suspend fun createNavidromePlaylist(name: String, songIds: List<String>): Boolean {
+        if (!NavidromeManager.checkActiveServers() || songIds.isEmpty()) return false
+        return navidromeDataSource.createNavidromePlaylist(name, songIds, true)
+    }
+
     suspend fun addSongToPlaylist(playlistId: String, songID: String) {
         if (playlistId.startsWith("Local_")){
             localDataSource.addSongToLocalPlaylist(playlistId, songID)

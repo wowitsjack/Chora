@@ -15,11 +15,12 @@ interface ArtistDao {
     @Query("""
         SELECT * FROM artists
         WHERE EXISTS (
-            SELECT 1 FROM albums
-            WHERE albums.mediaCategory = 'music'
+            SELECT 1 FROM songs
+            WHERE songs.mediaCategory = 'music'
+              AND songs.navidromeID NOT IN (SELECT songId FROM hidden_songs)
               AND (
-                albums.artistId = artists.navidromeID
-                OR albums.artist COLLATE NOCASE = artists.name COLLATE NOCASE
+                songs.artistId = artists.navidromeID
+                OR songs.artist COLLATE NOCASE = artists.name COLLATE NOCASE
               )
         )
         ORDER BY
@@ -34,11 +35,12 @@ interface ArtistDao {
     @Query("""
         SELECT * FROM artists
         WHERE EXISTS (
-            SELECT 1 FROM albums
-            WHERE albums.mediaCategory = 'music'
+            SELECT 1 FROM songs
+            WHERE songs.mediaCategory = 'music'
+              AND songs.navidromeID NOT IN (SELECT songId FROM hidden_songs)
               AND (
-                albums.artistId = artists.navidromeID
-                OR albums.artist COLLATE NOCASE = artists.name COLLATE NOCASE
+                songs.artistId = artists.navidromeID
+                OR songs.artist COLLATE NOCASE = artists.name COLLATE NOCASE
               )
         )
         ORDER BY
@@ -57,11 +59,12 @@ interface ArtistDao {
         SELECT * FROM artists
         WHERE starred IS NOT NULL AND starred != ''
           AND EXISTS (
-            SELECT 1 FROM albums
-            WHERE albums.mediaCategory = 'music'
+            SELECT 1 FROM songs
+            WHERE songs.mediaCategory = 'music'
+              AND songs.navidromeID NOT IN (SELECT songId FROM hidden_songs)
               AND (
-                albums.artistId = artists.navidromeID
-                OR albums.artist COLLATE NOCASE = artists.name COLLATE NOCASE
+                songs.artistId = artists.navidromeID
+                OR songs.artist COLLATE NOCASE = artists.name COLLATE NOCASE
               )
           )
     """)

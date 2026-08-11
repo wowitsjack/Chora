@@ -10,7 +10,7 @@ object GreetingMessages {
         // Late night (0-5)
         Greeting("Burning the midnight oil, {name}?", 0..4),
         Greeting("Can't sleep? Music helps, {name}", 0..4),
-        Greeting("The world's asleep but not you, {name}", 0..4),
+        Greeting("The world is asleep. Music keeps watch, {name}", 0..4),
         Greeting("3am thoughts need 3am songs, {name}", 0..4),
         Greeting("Nocturnal mode activated, {name}", 0..4),
         Greeting("When sleep fails, music prevails, {name}", 0..4),

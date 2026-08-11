@@ -45,4 +45,37 @@ class ArtworkQualityTest {
             coverArtUrlAtSize("https://server/coverArt?id=album-7", 0)
         }
     }
+
+    @Test
+    fun rapidTrackChangesAlwaysReceiveADistinctRenderKey() {
+        val requestKey = artworkRequestKey(
+            namespace = "player",
+            identity = "song-1",
+            artworkData = "https://server/coverArt?id=album-7&token=secret",
+            size = 512
+        )
+
+        assertEquals(
+            requestKey,
+            artworkRequestKey(
+                namespace = "player",
+                identity = "song-2",
+                artworkData = "https://server/coverArt?id=album-7&token=secret",
+                size = 512
+            )
+        )
+        org.junit.Assert.assertNotEquals(
+            artworkRenderKey("song-1", requestKey),
+            artworkRenderKey("song-2", requestKey)
+        )
+    }
+
+    @Test
+    fun changedArtworkCannotReuseAStaleCacheEntry() {
+        val first = artworkRequestKey("player", "song-1", "https://server/coverArt?id=first", 512)
+        val second = artworkRequestKey("player", "song-1", "https://server/coverArt?id=second", 512)
+
+        org.junit.Assert.assertNotEquals(first, second)
+        org.junit.Assert.assertFalse(first.contains("https://"))
+    }
 }

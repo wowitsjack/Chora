@@ -10,6 +10,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 var navidromeStatus = mutableStateOf("")
 
@@ -55,4 +56,15 @@ fun parseNavidromeStatus(
 
     navidromeStatus.value = "ok"
     return listOf(subsonicResponse.status)
+}
+
+internal fun isSuccessfulSubsonicResponse(response: String): Boolean {
+    val jsonParser = Json { ignoreUnknownKeys = true }
+    val jsonElement = runCatching {
+        jsonParser.parseToJsonElement(response).jsonObject["subsonic-response"]
+    }.getOrNull() ?: return false
+
+    return runCatching {
+        jsonElement.jsonObject["status"]?.jsonPrimitive?.content == "ok"
+    }.getOrDefault(false)
 }

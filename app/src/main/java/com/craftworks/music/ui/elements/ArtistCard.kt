@@ -1,7 +1,8 @@
 package com.craftworks.music.ui.elements
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -14,42 +15,61 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import com.craftworks.music.R
 import com.craftworks.music.data.model.MediaData
 import com.craftworks.music.managers.settings.ArtworkSettingsManager
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ArtistCard(artist: MediaData.Artist, onClick: () -> Unit) {
+fun ArtistCard(
+    artist: MediaData.Artist,
+    onClick: () -> Unit,
+    onStartRadio: ((MediaData.Artist) -> Unit)? = null
+) {
     val context = LocalContext.current
     // Cache the settings manager to avoid creating new instance on each recomposition
     val artworkSettingsManager = remember(context) { ArtworkSettingsManager(context) }
     val generatedArtworkEnabled by artworkSettingsManager.generatedArtworkEnabledFlow.collectAsStateWithLifecycle(true)
+    var showContextMenu by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .padding(12.dp)
-            .aspectRatio(0.8f)
-            .widthIn(min = 96.dp, max = 256.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() }
-            .wrapContentHeight(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Box {
+        Column(
+            modifier = Modifier
+                .padding(12.dp)
+                .aspectRatio(0.8f)
+                .widthIn(min = 96.dp, max = 256.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = { if (onStartRadio != null) showContextMenu = true }
+                )
+                .wrapContentHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         val hasArtwork = !artist.artistImageUrl.isNullOrEmpty()
 
         if (hasArtwork) {
@@ -128,5 +148,26 @@ fun ArtistCard(artist: MediaData.Artist, onClick: () -> Unit) {
             maxLines = 1, overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
         )
+        }
+
+        DropdownMenu(
+            expanded = showContextMenu,
+            onDismissRequest = { showContextMenu = false }
+        ) {
+            DropdownMenuItem(
+                enabled = !artist.navidromeID.startsWith("Local_") && onStartRadio != null,
+                text = { Text(stringResource(R.string.Action_Instant_Mix)) },
+                onClick = {
+                    onStartRadio?.invoke(artist)
+                    showContextMenu = false
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(R.drawable.rounded_shuffle_24),
+                        contentDescription = null
+                    )
+                }
+            )
+        }
     }
 }

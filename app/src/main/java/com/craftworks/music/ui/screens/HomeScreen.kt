@@ -1,6 +1,7 @@
 package com.craftworks.music.ui.screens
 
 import android.content.res.Configuration
+import android.widget.Toast
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -39,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -79,6 +81,7 @@ import androidx.navigation.compose.rememberNavController
 import com.craftworks.music.R
 import com.craftworks.music.data.GreetingMessages
 import com.craftworks.music.data.model.Screen
+import com.craftworks.music.data.model.DiscoveryMixMode
 import com.craftworks.music.data.repository.AudiobookBook
 import com.craftworks.music.managers.NavidromeManager
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
@@ -94,6 +97,7 @@ import com.craftworks.music.ui.viewmodels.HomeScreenViewModel
 import com.craftworks.music.ui.viewmodels.AudiobooksViewModel
 import com.craftworks.music.ui.viewmodels.DiscoveryMixState
 import com.craftworks.music.ui.viewmodels.SyncIndicatorViewModel
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -303,6 +307,15 @@ fun HomeScreen(
                 onBuildMix = viewModel::buildDiscoveryMix
             )
 
+            FavoritesHomeCard(
+                onClick = {
+                    navHostController.navigate(Screen.Favorites.route) {
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+            )
+
             AudiobooksHomeCard(
                 books = audiobooks,
                 onClick = {
@@ -376,6 +389,52 @@ fun HomeScreen(
 }
 
 @Composable
+private fun FavoritesHomeCard(onClick: () -> Unit) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = ImageVector.vectorResource(R.drawable.round_star_24),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(38.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "Favorites",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Your favorite songs, ready to play",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 private fun AudiobooksHomeCard(
     books: List<AudiobookBook>,
     onClick: () -> Unit
@@ -441,8 +500,22 @@ private fun AudiobooksHomeCard(
 @Composable
 private fun DiscoveryMixCard(
     state: DiscoveryMixState,
-    onBuildMix: () -> Unit
+	onBuildMix: (DiscoveryMixMode, String) -> Unit
 ) {
+    val modes = remember {
+        listOf(
+            DiscoveryMixMode.SMART,
+            DiscoveryMixMode.HIDDEN_GEMS,
+            DiscoveryMixMode.REDISCOVER,
+            DiscoveryMixMode.ENERGY_RISE,
+            DiscoveryMixMode.COOLDOWN,
+            DiscoveryMixMode.INSTRUMENTAL,
+            DiscoveryMixMode.HARMONIC
+        )
+    }
+    var selectedModeName by rememberSaveable { mutableStateOf(DiscoveryMixMode.SMART.name) }
+	var intent by rememberSaveable { mutableStateOf("") }
+    val selectedMode = modes.firstOrNull { it.name == selectedModeName } ?: DiscoveryMixMode.SMART
     val isLoading = state is DiscoveryMixState.Loading
     val errorText = when (state) {
         DiscoveryMixState.Empty -> stringResource(R.string.Home_Discovery_Empty)
@@ -477,8 +550,37 @@ private fun DiscoveryMixCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+            ) {
+                modes.forEach { mode ->
+                    FilterChip(
+                        selected = selectedMode == mode,
+                        onClick = { selectedModeName = mode.name },
+                        enabled = !isLoading,
+                        label = { Text(mode.title) }
+                    )
+                }
+            }
+            Text(
+                text = selectedMode.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+			OutlinedTextField(
+				value = intent,
+				onValueChange = { intent = it },
+				enabled = !isLoading,
+				singleLine = true,
+				label = { Text("Describe the set") },
+				placeholder = { Text("Country, UK garage, chill with no drums") },
+				modifier = Modifier.fillMaxWidth()
+			)
             Button(
-                onClick = onBuildMix,
+				onClick = { onBuildMix(selectedMode, intent) },
                 enabled = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -498,10 +600,11 @@ private fun DiscoveryMixCard(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = stringResource(
-                        if (isLoading) R.string.Home_Discovery_Building
-                        else R.string.Home_Discovery_Action
-                    )
+                    text = if (isLoading) {
+                        stringResource(R.string.Home_Discovery_Building)
+                    } else {
+                        "Build ${selectedMode.title}"
+                    }
                 )
             }
             if (errorText != null) {
@@ -559,6 +662,8 @@ private fun DiscoveryMixCard(
     viewModel: HomeScreenViewModel
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val songActionsViewModel: SongActionsViewModel = hiltViewModel()
     val cardWidth = responsiveAlbumCardWidth()
 
     Column(
@@ -616,6 +721,21 @@ private fun DiscoveryMixCard(
                             )
                     } catch (e: Exception) {
                         e.printStackTrace()
+                    }
+                }
+            },
+            onStartRadio = { album ->
+                coroutineScope.launch {
+                    Toast.makeText(context, "Starting album radio…", Toast.LENGTH_SHORT).show()
+                    val albumId = album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId
+                    val seeds = viewModel.getAlbumSongs(albumId).drop(1)
+                    val mix = runCatching {
+                        songActionsViewModel.buildRadio(seeds)
+                    }.getOrDefault(emptyList())
+                    if (mix.isNotEmpty()) {
+                        SongHelper.play(mix, 0, mediaController)
+                    } else {
+                        Toast.makeText(context, "Couldn’t start album radio", Toast.LENGTH_SHORT).show()
                     }
                 }
             },

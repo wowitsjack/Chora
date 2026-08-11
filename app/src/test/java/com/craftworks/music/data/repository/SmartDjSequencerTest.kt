@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.craftworks.music.data.model.DiscoveryMixMode
 
 class SmartDjSequencerTest {
     @Test
@@ -182,12 +183,64 @@ class SmartDjSequencerTest {
         assertFalse(sequence.contains("song-205"))
     }
 
+    @Test
+    fun `energy lift starts low and finishes high`() {
+        val sequence = SmartDjSequencer.sequenceCandidates(
+            listOf(
+                track("high", genre = "Electronic", energy = 0.92f),
+                track("low", genre = "Electronic", energy = 0.12f),
+                track("upper-mid", genre = "Electronic", energy = 0.70f),
+                track("lower-mid", genre = "Electronic", energy = 0.38f)
+            ),
+            mode = DiscoveryMixMode.ENERGY_RISE,
+            outputLimit = 4
+        )
+
+        assertEquals("low", sequence.first().key)
+        assertEquals("high", sequence.last().key)
+    }
+
+    @Test
+    fun `wind down starts moderate and finishes calm`() {
+        val sequence = SmartDjSequencer.sequenceCandidates(
+            listOf(
+                track("calm", genre = "Downtempo", energy = 0.10f),
+                track("moderate", genre = "Downtempo", energy = 0.55f),
+                track("gentle", genre = "Downtempo", energy = 0.30f)
+            ),
+            mode = DiscoveryMixMode.COOLDOWN,
+            outputLimit = 3
+        )
+
+        assertEquals("moderate", sequence.first().key)
+        assertEquals("calm", sequence.last().key)
+    }
+
+    @Test
+    fun `harmonic mode prefers compatible camelot neighbours`() {
+        val sequence = SmartDjSequencer.sequenceCandidates(
+            listOf(
+                track("seed", genre = "House", camelot = "8A"),
+                track("wrong", genre = "House", camelot = "2B"),
+                track("same", genre = "House", camelot = "8A"),
+                track("adjacent", genre = "House", camelot = "9A")
+            ),
+            mode = DiscoveryMixMode.HARMONIC,
+            outputLimit = 4
+        ).ids()
+
+        assertTrue(sequence.indexOf("same") < sequence.indexOf("wrong"))
+        assertTrue(sequence.indexOf("adjacent") < sequence.indexOf("wrong"))
+    }
+
     private fun track(
         id: String,
         genre: String?,
         artist: String = "Artist $id",
         album: String = "Album $id",
         bpm: Int? = null,
+        energy: Float? = null,
+        camelot: String? = null,
         isAudiobook: Boolean = false
     ): SmartDjCandidate =
         SmartDjCandidate(
@@ -196,6 +249,8 @@ class SmartDjSequencerTest {
             artistKey = artist,
             albumKey = album,
             bpm = bpm,
+            energy = energy,
+            camelot = camelot,
             isAudiobook = isAudiobook
         )
 

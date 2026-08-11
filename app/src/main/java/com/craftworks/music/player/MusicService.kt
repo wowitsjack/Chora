@@ -4,10 +4,13 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Network
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.ui.util.fastFilter
 import androidx.core.math.MathUtils.clamp
@@ -19,6 +22,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaConstants
@@ -36,6 +40,7 @@ import com.craftworks.music.data.repository.AudiobookProgressRepository
 import com.craftworks.music.data.repository.AudiobookRepository
 import com.craftworks.music.data.repository.ArtistRepository
 import com.craftworks.music.data.repository.LyricsRepository
+import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.data.repository.PlaylistRepository
 import com.craftworks.music.data.repository.RadioRepository
 import com.craftworks.music.data.repository.SongRepository
@@ -46,6 +51,7 @@ import com.craftworks.music.managers.settings.LocalDataSettingsManager
 import com.craftworks.music.managers.settings.PlaybackSettingsManager
 import com.craftworks.music.providers.navidrome.generateSalt
 import com.craftworks.music.providers.navidrome.md5Hash
+import com.craftworks.music.ui.playing.lyricsOpen
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -107,9 +113,17 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     var session: MediaLibrarySession? = null
 
     private var scrobbleJob: Job? = null
+    private var nowPlayingScrobbleJob: Job? = null
+    private var lyricsJob: Job? = null
+    private var playbackWatchdogJob: Job? = null
+    private var networkRecoveryJob: Job? = null
     private var playerListener: Player.Listener? = null
     private val artistNamesById = ConcurrentHashMap<String, String>()
     private val queueWindowExtensionInProgress = AtomicBoolean(false)
+    private var recoveryMediaId: String? = null
+    private var recoveryAttempts = 0
+    private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
+    private var lastValidatedNetwork: Network? = null
 
     @Inject lateinit var playbackSettingsManager: PlaybackSettingsManager
     @Inject lateinit var localDataSettingsManager: LocalDataSettingsManager
@@ -126,6 +140,13 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     @Inject lateinit var audiobookRepository: AudiobookRepository
 
     companion object {
+        private const val NOW_PLAYING_DEBOUNCE_MS = 1_500L
+        private const val PLAYBACK_START_TIMEOUT_MS = 9_000L
+        private const val PLAYBACK_ERROR_RETRY_DELAY_MS = 1_000L
+        private const val PLAYBACK_RETRY_WATCHDOG_MS = 7_000L
+        private const val NETWORK_SETTLE_DELAY_MS = 750L
+        private const val MAX_PLAYBACK_RECOVERY_ATTEMPTS = 2
+
         private var instance: ChoraMediaLibraryService? = null
 
         fun getInstance(): ChoraMediaLibraryService? {
@@ -334,8 +355,18 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
     @OptIn(UnstableApi::class)
     fun initializePlayer() {
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                15_000,
+                90_000,
+                1_500,
+                3_000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
         player = ExoPlayer.Builder(this)
             .setSeekParameters(SeekParameters.EXACT)
+            .setLoadControl(loadControl)
             .setWakeMode(
                 if (NavidromeManager.checkActiveServers())
                     C.WAKE_MODE_NETWORK
@@ -354,6 +385,16 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
         playerListener = object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val mediaId = mediaItem?.mediaId
+                if (mediaId != recoveryMediaId) {
+                    recoveryMediaId = mediaId
+                    recoveryAttempts = 0
+                }
+                playbackWatchdogJob?.cancel()
+                lyricsJob?.cancel()
+                LyricsState.clear()
+                lyricsOpen = false
+
                 lastAudiobookSnapshot?.let { snapshot ->
                     persistAudiobookSnapshot(snapshot, syncImmediately = true)
                 }
@@ -390,21 +431,55 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 super.onMediaItemTransition(mediaItem, reason)
                 extendPlaybackQueueWindowIfNeeded()
 
-                serviceIOScope.launch {
+                nowPlayingScrobbleJob?.cancel()
+                nowPlayingScrobbleJob = serviceMainScope.launch {
                     try {
-                        if (!isAudiobook) {
-                            songRepository.scrobbleSong(mediaItem?.mediaMetadata?.extras?.getString("navidromeID") ?: "", false)
-                            lyricsRepository.getLyrics(mediaItem?.mediaMetadata)
+                        delay(NOW_PLAYING_DEBOUNCE_MS)
+                        if (
+                            !isAudiobook &&
+                            player.currentMediaItem?.mediaId == mediaId &&
+                            player.playWhenReady
+                        ) {
+                            val navidromeId = mediaItem?.mediaMetadata?.extras
+                                ?.getString("navidromeID")
+                                .orEmpty()
+                            withContext(Dispatchers.IO) {
+                                songRepository.scrobbleSong(navidromeId, false)
+                            }
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
-                        Log.e("PLAYER", "Error scrobbling or fetching lyrics", e)
+                        Log.e("PLAYER", "Error reporting current song", e)
                     }
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                error.printStackTrace()
                 Log.e("PLAYER", error.stackTraceToString())
+                schedulePlaybackRecovery(PLAYBACK_ERROR_RETRY_DELAY_MS)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_READY, Player.STATE_ENDED -> {
+                        playbackWatchdogJob?.cancel()
+                        if (playbackState == Player.STATE_READY) recoveryAttempts = 0
+                    }
+                    Player.STATE_BUFFERING -> schedulePlaybackRecovery(PLAYBACK_START_TIMEOUT_MS)
+                    Player.STATE_IDLE -> if (player.playWhenReady) {
+                        schedulePlaybackRecovery(PLAYBACK_ERROR_RETRY_DELAY_MS)
+                    }
+                }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) {
+                    playbackWatchdogJob?.cancel()
+                    recoveryAttempts = 0
+                } else if (player.playWhenReady && player.playbackState == Player.STATE_BUFFERING) {
+                    schedulePlaybackRecovery(PLAYBACK_START_TIMEOUT_MS)
+                }
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
@@ -452,6 +527,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             }
         }
         playerListener?.let { player.addListener(it) }
+        registerConnectivityRecovery()
 
         val mainActivityIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -529,6 +605,138 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         }
 
         Log.d("AA", "Initialized MediaLibraryService.")
+    }
+
+    fun requestLyricsForCurrentItem() {
+        if (!::player.isInitialized) return
+        val mediaItem = player.currentMediaItem ?: return
+        if (
+            mediaItem.mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION ||
+            mediaItem.mediaMetadata.extras?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
+        ) return
+
+        val requestedMediaId = mediaItem.mediaId
+        lyricsJob?.cancel()
+        lyricsJob = serviceMainScope.launch {
+            LyricsState.isLoading.value = true
+            try {
+                withContext(Dispatchers.IO) {
+                    lyricsRepository.getLyrics(mediaItem.mediaMetadata)
+                }
+                if (
+                    player.currentMediaItem?.mediaId == requestedMediaId &&
+                    LyricsState.lyrics.value.isEmpty()
+                ) {
+                    lyricsOpen = false
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("LYRICS", "Could not load lyrics", e)
+                if (player.currentMediaItem?.mediaId == requestedMediaId) {
+                    LyricsState.clear()
+                    lyricsOpen = false
+                }
+            } finally {
+                if (player.currentMediaItem?.mediaId == requestedMediaId) {
+                    LyricsState.isLoading.value = false
+                }
+            }
+        }
+    }
+
+    private fun schedulePlaybackRecovery(delayMs: Long) {
+        if (!::player.isInitialized || !player.playWhenReady || player.currentMediaItem == null) return
+        playbackWatchdogJob?.cancel()
+        playbackWatchdogJob = serviceMainScope.launch {
+            delay(delayMs)
+            if (!::player.isInitialized || player.isPlaying || !player.playWhenReady) return@launch
+            recoverPlayback()
+        }
+    }
+
+    private suspend fun recoverPlayback() {
+        if (!::player.isInitialized || player.currentMediaItem == null || player.isPlaying) return
+        if (!hasValidatedNetwork() || recoveryAttempts >= MAX_PLAYBACK_RECOVERY_ATTEMPTS) return
+
+        recoveryAttempts += 1
+        Toast.makeText(
+            this,
+            if (recoveryAttempts == 1) {
+                "Sorry, this song is taking a moment. Reconnecting…"
+            } else {
+                "Still being stubborn. Trying a lighter stream…"
+            },
+            Toast.LENGTH_SHORT
+        ).show()
+
+        val currentItem = player.currentMediaItem ?: return
+        val currentIndex = player.currentMediaItemIndex
+        val currentPosition = player.currentPosition.coerceAtLeast(0L)
+        val onlineSongId = currentItem.mediaMetadata.extras?.getString("navidromeID")
+            ?.takeUnless { it.startsWith("Local_") }
+
+        if (recoveryAttempts >= 2 && onlineSongId != null) {
+            val fallbackBitrate = if (isActiveNetworkMetered()) "96" else "128"
+            val fallbackItem = resolveMediaItemForPlayback(
+                currentItem,
+                "&maxBitRate=$fallbackBitrate&format=mp3"
+            )
+            player.replaceMediaItem(currentIndex, fallbackItem)
+            player.seekTo(currentIndex, currentPosition)
+        }
+        player.prepare()
+        player.play()
+        schedulePlaybackRecovery(PLAYBACK_RETRY_WATCHDOG_MS)
+    }
+
+    private fun registerConnectivityRecovery() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    if (lastValidatedNetwork != network) {
+                        lastValidatedNetwork = network
+                        scheduleNetworkRecovery()
+                    }
+                }
+            }
+
+            override fun onLost(network: Network) {
+                if (lastValidatedNetwork == network) lastValidatedNetwork = null
+            }
+        }
+        connectivityCallback = callback
+        connectivityManager.registerDefaultNetworkCallback(callback)
+    }
+
+    private fun scheduleNetworkRecovery() {
+        networkRecoveryJob?.cancel()
+        networkRecoveryJob = serviceMainScope.launch {
+            delay(NETWORK_SETTLE_DELAY_MS)
+            if (
+                ::player.isInitialized &&
+                player.playWhenReady &&
+                !player.isPlaying &&
+                hasValidatedNetwork()
+            ) {
+                recoveryAttempts = 0
+                recoverPlayback()
+            }
+        }
+    }
+
+    private fun hasValidatedNetwork(): Boolean {
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    private fun isActiveNetworkMetered(): Boolean {
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        return manager.isActiveNetworkMetered
     }
 
     private fun extendPlaybackQueueWindowIfNeeded() {
@@ -1019,6 +1227,22 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         }
         scrobbleJob?.cancel()
         scrobbleJob = null
+        nowPlayingScrobbleJob?.cancel()
+        nowPlayingScrobbleJob = null
+        lyricsJob?.cancel()
+        lyricsJob = null
+        playbackWatchdogJob?.cancel()
+        playbackWatchdogJob = null
+        networkRecoveryJob?.cancel()
+        networkRecoveryJob = null
+        connectivityCallback?.let { callback ->
+            runCatching {
+                (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager)
+                    .unregisterNetworkCallback(callback)
+            }
+        }
+        connectivityCallback = null
+        lastValidatedNetwork = null
         // Cancel coroutine scopes to prevent memory leaks and orphaned coroutines
         (serviceMainScope.coroutineContext[Job])?.cancel()
         (serviceIOScope.coroutineContext[Job])?.cancel()
@@ -1354,27 +1578,23 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         }
 
         return mediaItems.map { mediaItem ->
-            val songId = mediaItem.mediaMetadata.extras?.getString("navidromeID")
-            val offlinePath = if (songId != null) {
-                offlineMediaResolver.getOfflinePath(songId)
-            } else null
-
-            val baseItem = if (offlinePath != null) {
-                MediaItem.Builder()
-                    .setMediaId(mediaItem.mediaId)
-                    .setMediaMetadata(mediaItem.mediaMetadata)
-                    .setUri(offlinePath)
-                    .build()
-            } else {
-                MediaItem.Builder()
-                    .setMediaId(mediaItem.mediaId)
-                    .setMediaMetadata(mediaItem.mediaMetadata)
-                    .setUri(resolveOnlinePlaybackUri(mediaItem, bitrateOptions))
-                    .build()
-            }
-
-            baseItem
+            resolveMediaItemForPlayback(mediaItem, bitrateOptions)
         }
+    }
+
+    private suspend fun resolveMediaItemForPlayback(
+        mediaItem: MediaItem,
+        bitrateOptions: String
+    ): MediaItem {
+        val songId = mediaItem.mediaMetadata.extras?.getString("navidromeID")
+        val offlinePath = songId?.let { offlineMediaResolver.getOfflinePath(it) }
+        val uri = offlinePath ?: resolveOnlinePlaybackUri(mediaItem, bitrateOptions)
+
+        return MediaItem.Builder()
+            .setMediaId(mediaItem.mediaId)
+            .setMediaMetadata(mediaItem.mediaMetadata)
+            .setUri(uri)
+            .build()
     }
 
     private fun resolveOnlinePlaybackUri(

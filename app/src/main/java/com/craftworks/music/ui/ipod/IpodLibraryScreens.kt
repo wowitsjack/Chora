@@ -41,17 +41,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.MediaItem
+import com.craftworks.music.data.model.favoritesPlaylistMediaItem
+import com.craftworks.music.data.model.DiscoveryMetadataKeys
+import com.craftworks.music.data.model.DiscoveryMixMode
 import com.craftworks.music.data.model.MediaData
 
 @Composable
 internal fun IpodSongsScreen(
     songs: List<MediaItem>,
+    loading: Boolean,
     currentMediaId: String?,
     onSongClick: (MediaItem) -> Unit,
     onSongLongClick: (MediaItem) -> Unit
 ) {
     if (songs.isEmpty()) {
-        IpodMessage("No Songs", "Sync a music source, then return here.")
+        if (loading) {
+            IpodMessage("Loading…", "Reading songs from your library.")
+        } else {
+            IpodMessage("No Songs", "Sync a music source, then return here.")
+        }
         return
     }
     LazyColumn(
@@ -77,10 +85,16 @@ internal fun IpodSongsScreen(
 @Composable
 internal fun IpodArtistsScreen(
     artists: List<MediaData.Artist>,
-    onArtistClick: (MediaData.Artist) -> Unit
+    loading: Boolean,
+    onArtistClick: (MediaData.Artist) -> Unit,
+    onArtistLongClick: (MediaData.Artist) -> Unit
 ) {
     if (artists.isEmpty()) {
-        IpodMessage("No Artists", "Artist names appear after your library syncs.")
+        if (loading) {
+            IpodMessage("Loading…", "Reading artists from your library.")
+        } else {
+            IpodMessage("No Artists", "Artist names appear after your library syncs.")
+        }
         return
     }
     val groups = remember(artists) {
@@ -103,7 +117,8 @@ internal fun IpodArtistsScreen(
                     title = artist.name,
                     subtitle = artist.albumCount?.let { "$it albums" },
                     showChevron = true,
-                    onClick = { onArtistClick(artist) }
+                    onClick = { onArtistClick(artist) },
+                    onLongClick = { onArtistLongClick(artist) }
                 )
             }
         }
@@ -114,20 +129,129 @@ internal fun IpodArtistsScreen(
 internal fun IpodPlaylistsScreen(
     playlists: List<MediaItem>,
     loading: Boolean,
+    discoveryMixBuilding: DiscoveryMixMode?,
+    discoveryMixMode: DiscoveryMixMode?,
+    discoveryMixSongs: List<MediaItem>,
+    onBuildDiscoveryMix: (DiscoveryMixMode) -> Unit,
+    onPlayDiscoveryMix: (Int) -> Unit,
+    onSaveDiscoveryMix: () -> Unit,
     onPlaylistClick: (MediaItem) -> Unit
 ) {
-    if (playlists.isEmpty()) {
-        IpodMessage(
-            title = if (loading) "Loading Playlists…" else "No Playlists",
-            detail = if (loading) "Reading your library." else "Create a playlist in Chora or Navidrome."
+    val favoritesPlaylist = remember { favoritesPlaylistMediaItem() }
+    val builderModes = remember {
+        listOf(
+            DiscoveryMixMode.SMART,
+            DiscoveryMixMode.HIDDEN_GEMS,
+            DiscoveryMixMode.REDISCOVER,
+            DiscoveryMixMode.ENERGY_RISE,
+            DiscoveryMixMode.COOLDOWN,
+            DiscoveryMixMode.INSTRUMENTAL,
+            DiscoveryMixMode.HARMONIC
         )
-        return
     }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(IpodColors.Content)
     ) {
+        item(key = "smart-playlists-header") {
+            IpodSectionHeader("Smart Playlists")
+        }
+        itemsIndexed(
+            items = builderModes,
+            key = { _, mode -> "builder-${mode.apiValue}" }
+        ) { _, mode ->
+            val isBuilding = discoveryMixBuilding == mode
+            IpodListRow(
+                title = if (isBuilding) "Building ${mode.title}…" else mode.title,
+                subtitle = mode.description,
+                showChevron = discoveryMixBuilding == null,
+                onClick = {
+                    if (discoveryMixBuilding == null) onBuildDiscoveryMix(mode)
+                }
+            )
+        }
+
+        if (discoveryMixMode != null && discoveryMixSongs.isNotEmpty()) {
+            item(key = "generated-mix-header") {
+                IpodSectionHeader("Generated ${discoveryMixMode.title}")
+            }
+            item(key = "generated-mix-actions") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Text(
+                        text = "${discoveryMixSongs.size} songs. No awkward hand-offs.",
+                        color = IpodColors.SecondaryText,
+                        fontSize = 13.sp,
+                        lineHeight = 16.sp
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IpodActionButton(
+                            label = "Play Mix",
+                            modifier = Modifier.weight(1f),
+                            onClick = { onPlayDiscoveryMix(0) }
+                        )
+                        IpodActionButton(
+                            label = "Save Playlist",
+                            modifier = Modifier.weight(1f),
+                            enabled = !loading,
+                            onClick = onSaveDiscoveryMix
+                        )
+                    }
+                }
+            }
+            itemsIndexed(
+                items = discoveryMixSongs.take(5),
+                key = { index, song -> "preview-${song.mediaId}-$index" }
+            ) { index, song ->
+                val metadata = song.mediaMetadata
+                val extras = metadata.extras
+                val musicalDetails = listOfNotNull(
+                    extras?.getFloat(DiscoveryMetadataKeys.BPM)
+                        ?.takeIf { it > 0f }
+                        ?.let { "${it.toInt()} BPM" },
+                    extras?.getString(DiscoveryMetadataKeys.CAMELOT)
+                        ?.takeIf { it.isNotBlank() },
+                    extras?.getString(DiscoveryMetadataKeys.REASON)
+                        ?.takeIf { it.isNotBlank() }
+                ).joinToString(" · ")
+                IpodListRow(
+                    prefix = (index + 1).toString(),
+                    title = metadata.title?.toString() ?: "Unknown Song",
+                    subtitle = musicalDetails.ifBlank {
+                        metadata.artist?.toString().orEmpty()
+                    }.takeIf { it.isNotBlank() },
+                    onClick = { onPlayDiscoveryMix(index) }
+                )
+            }
+        }
+
+        item(key = "library-playlists-header") {
+            IpodSectionHeader("Library Playlists")
+        }
+        item(key = "favorites-playlist") {
+            IpodListRow(
+                title = "Favorites",
+                subtitle = "Songs you've starred",
+                showChevron = true,
+                onClick = { onPlaylistClick(favoritesPlaylist) }
+            )
+        }
+        if (playlists.isEmpty()) {
+            item(key = "playlist-empty") {
+                IpodInlineMessage(
+                    if (loading) "Loading your playlists…"
+                    else "No saved playlists yet. Build one above."
+                )
+            }
+        }
         itemsIndexed(
             items = playlists,
             key = { index, playlist -> "${playlist.mediaId}-$index" }
@@ -146,10 +270,16 @@ internal fun IpodPlaylistsScreen(
 @Composable
 internal fun IpodAlbumsScreen(
     albums: List<MediaItem>,
-    onAlbumClick: (MediaItem) -> Unit
+    loading: Boolean,
+    onAlbumClick: (MediaItem) -> Unit,
+    onAlbumLongClick: (MediaItem) -> Unit
 ) {
     if (albums.isEmpty()) {
-        IpodMessage("No Albums", "Album covers appear after your library syncs.")
+        if (loading) {
+            IpodMessage("Loading…", "Reading albums from your library.")
+        } else {
+            IpodMessage("No Albums", "Album covers appear after your library syncs.")
+        }
         return
     }
     BoxWithConstraints(
@@ -167,18 +297,27 @@ internal fun IpodAlbumsScreen(
                 items = albums,
                 key = { index, album -> "${album.mediaId}-$index" }
             ) { _, album ->
-                IpodAlbumCell(album = album, onClick = { onAlbumClick(album) })
+                IpodAlbumCell(
+                    album = album,
+                    onClick = { onAlbumClick(album) },
+                    onLongClick = { onAlbumLongClick(album) }
+                )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun IpodAlbumCell(album: MediaItem, onClick: () -> Unit) {
+private fun IpodAlbumCell(
+    album: MediaItem,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     val title = album.mediaMetadata.albumTitle?.toString()
         ?: album.mediaMetadata.title?.toString()
         ?: "Unknown Album"
-    val artist = album.mediaMetadata.albumArtist?.toString()
+    val artist = album.mediaMetadata.artist?.toString()
         ?: album.mediaMetadata.artist?.toString()
         ?: "Unknown Artist"
     val interactionSource = remember { MutableInteractionSource() }
@@ -187,11 +326,12 @@ private fun IpodAlbumCell(album: MediaItem, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .padding(5.dp)
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
                 role = Role.Button,
-                onClick = onClick
+                onClick = onClick,
+                onLongClick = onLongClick
             )
             .background(if (pressed) IpodColors.SelectedBlue.copy(alpha = 0.18f) else Color.Transparent)
             .padding(3.dp)
@@ -236,13 +376,14 @@ internal fun IpodAlbumDetail(
     loading: Boolean,
     currentMediaId: String?,
     onPlayAll: () -> Unit,
+    onStartRadio: () -> Unit,
     onSongClick: (MediaItem) -> Unit,
     onSongLongClick: (MediaItem) -> Unit
 ) {
     val title = album.mediaMetadata.albumTitle?.toString()
         ?: album.mediaMetadata.title?.toString()
         ?: "Unknown Album"
-    val artist = album.mediaMetadata.albumArtist?.toString()
+    val artist = album.mediaMetadata.artist?.toString()
         ?: album.mediaMetadata.artist?.toString()
         ?: "Unknown Artist"
 
@@ -302,6 +443,12 @@ internal fun IpodAlbumDetail(
                         enabled = songs.isNotEmpty(),
                         onClick = onPlayAll
                     )
+                    Spacer(Modifier.height(5.dp))
+                    IpodActionButton(
+                        label = "Start Radio",
+                        enabled = songs.isNotEmpty(),
+                        onClick = onStartRadio
+                    )
                 }
             }
             IpodSectionHeader(if (loading && songs.isEmpty()) "Loading…" else "Songs")
@@ -328,16 +475,267 @@ internal fun IpodAlbumDetail(
 internal fun IpodArtistDetail(
     artist: MediaData.Artist,
     albums: List<MediaItem>,
+    songs: List<MediaItem>,
     loading: Boolean,
-    onAlbumClick: (MediaItem) -> Unit
+    currentMediaId: String?,
+    onPlayAll: (List<MediaItem>) -> Unit,
+    onAlbumClick: (MediaItem) -> Unit,
+    onAlbumLongClick: (MediaItem) -> Unit,
+    onStartRadio: () -> Unit,
+    onSongClick: (MediaItem) -> Unit,
+    onSongLongClick: (MediaItem) -> Unit
 ) {
-    if (albums.isEmpty()) {
-        IpodMessage(
-            title = if (loading) "Loading ${artist.name}…" else "No Albums",
-            detail = if (loading) "Reading your library." else "No albums are available for this artist."
+    val discography = remember(albums, songs) {
+        buildIpodArtistDiscography(albums, songs)
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(IpodColors.Content)
+    ) {
+        item(key = "artist-header") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = artist.name,
+                    color = IpodColors.Text,
+                    fontSize = 18.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    IpodActionButton(
+                        label = "Play All",
+                        modifier = Modifier.weight(1f),
+                        enabled = discography.orderedSongs.isNotEmpty(),
+                        onClick = { onPlayAll(discography.orderedSongs) }
+                    )
+                    IpodActionButton(
+                        label = "Start Radio",
+                        modifier = Modifier.weight(1f),
+                        enabled = !loading && discography.orderedSongs.isNotEmpty(),
+                        onClick = onStartRadio
+                    )
+                }
+            }
+            IpodSectionHeader(if (loading && songs.isEmpty()) "Loading…" else "Albums & Songs")
+        }
+
+        discography.groups.forEach { group ->
+            item(key = "artist-album-${group.key}") {
+                IpodArtistAlbumHeader(
+                    group = group,
+                    onClick = { group.album?.let(onAlbumClick) },
+                    onLongClick = { group.album?.let(onAlbumLongClick) }
+                )
+            }
+            itemsIndexed(
+                items = group.songs,
+                key = { index, song -> "${group.key}-${song.mediaId}-$index" }
+            ) { index, song ->
+                IpodSongRow(
+                    song = song,
+                    trackNumber = song.mediaMetadata.trackNumber?.takeIf { it > 0 } ?: index + 1,
+                    isCurrent = song.mediaId == currentMediaId,
+                    onClick = { onSongClick(song) },
+                    onLongClick = { onSongLongClick(song) }
+                )
+            }
+        }
+
+        if (!loading && discography.orderedSongs.isEmpty()) {
+            item(key = "artist-empty") {
+                IpodInlineMessage("No songs are available for this artist.")
+            }
+        }
+    }
+}
+
+private data class IpodArtistDiscography(
+    val orderedSongs: List<MediaItem>,
+    val groups: List<IpodArtistAlbumGroup>
+)
+
+private data class IpodArtistAlbumGroup(
+    val key: String,
+    val album: MediaItem?,
+    val title: String,
+    val artist: String,
+    val year: Int?,
+    val songs: List<MediaItem>
+)
+
+private fun buildIpodArtistDiscography(
+    albums: List<MediaItem>,
+    songs: List<MediaItem>
+): IpodArtistDiscography {
+    fun normalizedTitle(value: String): String = value.trim().lowercase()
+    fun albumKey(album: MediaItem): String = album.mediaMetadata.extras
+        ?.getString("navidromeID")
+        ?.takeIf { it.isNotBlank() }
+        ?: album.mediaId
+
+    val albumsById = albums.associateBy(::albumKey)
+    val albumsByTitle = albums.associateBy { album ->
+        normalizedTitle(
+            album.mediaMetadata.albumTitle?.toString()
+                ?: album.mediaMetadata.title?.toString()
+                ?: ""
+        )
+    }
+
+    fun resolvedAlbum(song: MediaItem): MediaItem? {
+        val songAlbumId = song.mediaMetadata.extras?.getString("albumId").orEmpty()
+        return albumsById[songAlbumId]
+            ?: albumsByTitle[normalizedTitle(song.mediaMetadata.albumTitle?.toString().orEmpty())]
+    }
+
+    fun resolvedAlbumKey(song: MediaItem): String {
+        val resolved = resolvedAlbum(song)
+        if (resolved != null) return albumKey(resolved)
+        val songAlbumId = song.mediaMetadata.extras?.getString("albumId").orEmpty()
+        val title = normalizedTitle(song.mediaMetadata.albumTitle?.toString().orEmpty())
+        return "other:${songAlbumId.ifBlank { title.ifBlank { "unknown" } }}"
+    }
+
+    val entries = songs.mapIndexed { index, song ->
+        IpodDiscographySortEntry(
+            sourceIndex = index,
+            albumKey = resolvedAlbumKey(song),
+            albumTitle = song.mediaMetadata.albumTitle?.toString().orEmpty(),
+            discNumber = song.mediaMetadata.discNumber,
+            trackNumber = song.mediaMetadata.trackNumber,
+            title = song.mediaMetadata.title?.toString().orEmpty()
+        )
+    }
+    val albumOrder = albums.map(::albumKey)
+    val orderedSongs = orderedIpodDiscographyIndices(albumOrder, entries).map(songs::get)
+    val songsByAlbum = orderedSongs.groupBy(::resolvedAlbumKey)
+
+    val knownGroups = albums.map { album ->
+        val key = albumKey(album)
+        IpodArtistAlbumGroup(
+            key = key,
+            album = album,
+            title = album.mediaMetadata.albumTitle?.toString()
+                ?: album.mediaMetadata.title?.toString()
+                ?: "Unknown Album",
+            artist = album.mediaMetadata.artist?.toString()
+                ?: album.mediaMetadata.artist?.toString()
+                ?: "",
+            year = album.mediaMetadata.recordingYear?.takeIf { it > 0 },
+            songs = songsByAlbum[key].orEmpty()
+        )
+    }
+    val knownKeys = knownGroups.mapTo(mutableSetOf()) { it.key }
+    val otherGroups = orderedSongs
+        .filter { resolvedAlbumKey(it) !in knownKeys }
+        .groupBy(::resolvedAlbumKey)
+        .map { (key, groupSongs) ->
+            val first = groupSongs.first()
+            IpodArtistAlbumGroup(
+                key = key,
+                album = null,
+                title = first.mediaMetadata.albumTitle?.toString()?.takeIf { it.isNotBlank() }
+                    ?: "Other Songs",
+                artist = first.mediaMetadata.artist?.toString().orEmpty(),
+                year = first.mediaMetadata.recordingYear?.takeIf { it > 0 },
+                songs = groupSongs
+            )
+        }
+
+    return IpodArtistDiscography(
+        orderedSongs = orderedSongs,
+        groups = knownGroups + otherGroups
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun IpodArtistAlbumHeader(
+    group: IpodArtistAlbumGroup,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val clickableModifier = if (group.album != null) {
+        Modifier.combinedClickable(
+            interactionSource = interactionSource,
+            indication = null,
+            role = Role.Button,
+            onClick = onClick,
+            onLongClick = onLongClick
         )
     } else {
-        IpodAlbumsScreen(albums = albums, onAlbumClick = onAlbumClick)
+        Modifier
+    }
+    val artwork = group.album?.mediaMetadata?.artworkUri
+        ?: group.songs.firstOrNull()?.mediaMetadata?.artworkUri
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (pressed) IpodColors.SelectedBlue.copy(alpha = 0.18f) else IpodColors.Content)
+            .then(clickableModifier)
+            .padding(horizontal = 10.dp, vertical = 7.dp)
+    ) {
+        IpodArtwork(
+            artwork = artwork,
+            title = group.title,
+            artist = group.artist,
+            identity = group.key,
+            modifier = Modifier
+                .size(58.dp)
+                .clip(RoundedCornerShape(3.dp))
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 10.dp)
+        ) {
+            Text(
+                text = group.title,
+                color = IpodColors.Text,
+                fontSize = 16.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = listOfNotNull(
+                    group.year?.toString(),
+                    "${group.songs.size} ${if (group.songs.size == 1) "song" else "songs"}"
+                ).joinToString(" · "),
+                color = IpodColors.SecondaryText,
+                fontSize = 12.sp,
+                lineHeight = 15.sp,
+                letterSpacing = 0.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (group.album != null) {
+            Text(
+                text = "›",
+                color = Color(0xFF8C8C8C),
+                fontSize = 28.sp,
+                modifier = Modifier.padding(start = 6.dp)
+            )
+        }
     }
 }
 

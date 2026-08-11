@@ -43,6 +43,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.ui.elements.PLAYER_CARD_ARTWORK_DEBOUNCE_MS
 import com.craftworks.music.ui.util.TextDisplayUtils
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -89,6 +90,8 @@ fun NowPlayingMiniPlayer(
                     metadata = metadata,
                     targetSize = 512,
                     contentDescription = "Album Cover",
+                    crossfade = false,
+                    requestDelayMillis = PLAYER_CARD_ARTWORK_DEBOUNCE_MS,
                     modifier = Modifier
                         .padding(start = 8.dp)
                         .size(48.dp)

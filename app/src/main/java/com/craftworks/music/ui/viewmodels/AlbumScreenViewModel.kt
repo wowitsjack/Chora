@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -34,6 +35,9 @@ class AlbumScreenViewModel @Inject constructor(
     private val albumDao: AlbumDao,
     private val songDao: SongDao
 ) : ViewModel() {
+
+    private val _hasLoaded = MutableStateFlow(false)
+    val hasLoaded: StateFlow<Boolean> = _hasLoaded.asStateFlow()
 
     private val _sortOrder = MutableStateFlow(SortOrder.ALPHABETICAL)
     val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
@@ -64,6 +68,8 @@ class AlbumScreenViewModel @Inject constructor(
                 unstarred.sortedBy { TextDisplayUtils.getSortKey(it.mediaMetadata.title?.toString()) }
             }
         }
+    }.onEach {
+        _hasLoaded.value = true
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

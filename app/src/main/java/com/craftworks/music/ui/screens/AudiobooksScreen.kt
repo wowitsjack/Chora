@@ -6,6 +6,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -105,6 +106,7 @@ fun AudiobooksScreen(
     viewModel: AudiobooksViewModel = hiltViewModel()
 ) {
     val books by viewModel.books.collectAsStateWithLifecycle()
+    val hasLoaded by viewModel.hasLoaded.collectAsStateWithLifecycle()
     val continueListening = remember(books) {
         books.filter { it.hasStarted && !it.isFinished }.sortedByDescending { it.updatedAt }
     }
@@ -112,6 +114,8 @@ fun AudiobooksScreen(
     val finished = remember(books) { books.filter(AudiobookBook::isFinished) }
 
     Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -130,7 +134,13 @@ fun AudiobooksScreen(
             )
         }
     ) { padding ->
-        if (books.isEmpty()) {
+        if (!hasLoaded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            )
+        } else if (books.isEmpty()) {
             AudiobookEmptyState(Modifier.padding(padding))
         } else {
             LazyColumn(

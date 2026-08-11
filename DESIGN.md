@@ -83,7 +83,7 @@
 ## Content voice
 - Tone: terse, neutral, and period-appropriate inside replica mode.
 - Terminology: use Songs, Albums, Artists, Playlists, More, Now Playing, Shuffle, Repeat, and Settings. Preserve server-provided metadata verbatim except existing track-number formatting preferences.
-- Microcopy rules: titles are short; empty/error states explain the next useful action; no promotional language or Material-era labels inside classic chrome.
+- Microcopy rules: titles are short; empty/error states explain the next useful action; no promotional language or Material-era labels inside classic chrome. Normal Chora mode may use curated rotating headings that stay stable while a screen is open. Avoid product self-congratulation, em dashes, and contrast templates shaped like “it is not X, it is Y” in both modes.
 
 ## Implementation constraints
 - Framework/styling system: Kotlin, Jetpack Compose, Hilt view models, DataStore preferences, Media3, Coil, and existing project resources. No new dependency is required.

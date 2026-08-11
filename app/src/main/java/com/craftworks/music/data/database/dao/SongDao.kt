@@ -7,41 +7,42 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
 import com.craftworks.music.data.database.entity.SongEntity
+import com.craftworks.music.data.database.entity.HiddenSongEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SongDao {
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' ORDER BY title COLLATE NOCASE ASC")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY title COLLATE NOCASE ASC")
     fun getAllSongs(): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' ORDER BY title COLLATE NOCASE ASC")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY title COLLATE NOCASE ASC")
     suspend fun getAllSongsOnce(): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE albumId = :albumId AND mediaCategory = 'music' ORDER BY discNumber, track")
+    @Query("SELECT * FROM songs WHERE albumId = :albumId AND mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY discNumber, track")
     fun getSongsByAlbum(albumId: String): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE artistId = :artistId AND mediaCategory = 'music' ORDER BY album, discNumber, track")
+    @Query("SELECT * FROM songs WHERE artistId = :artistId AND mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY album, discNumber, track")
     fun getSongsByArtist(artistId: String): Flow<List<SongEntity>>
 
     @Query("SELECT * FROM songs WHERE navidromeID = :id")
     suspend fun getSongById(id: String): SongEntity?
 
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' ORDER BY dateAdded DESC LIMIT :limit")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY dateAdded DESC LIMIT :limit")
     fun getRecentlyAdded(limit: Int = 50): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' ORDER BY timesPlayed DESC LIMIT :limit")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY timesPlayed DESC LIMIT :limit")
     fun getMostPlayed(limit: Int = 50): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND lastPlayed IS NOT NULL AND lastPlayed != '' ORDER BY lastPlayed DESC LIMIT :limit")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) AND lastPlayed IS NOT NULL AND lastPlayed != '' ORDER BY lastPlayed DESC LIMIT :limit")
     fun getRecentlyPlayed(limit: Int = 50): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' ORDER BY RANDOM() LIMIT :limit")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY RANDOM() LIMIT :limit")
     fun getRandomSongs(limit: Int = 50): Flow<List<SongEntity>>
 
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' ORDER BY RANDOM() LIMIT :limit")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY RANDOM() LIMIT :limit")
     suspend fun getRandomSongsOnce(limit: Int = 50): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND starred IS NOT NULL AND starred != ''")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) AND starred IS NOT NULL AND starred != ''")
     fun getStarredSongs(): Flow<List<SongEntity>>
 
     @Query("SELECT * FROM songs WHERE mediaCategory = 'audiobook' ORDER BY album, discNumber, track, title COLLATE NOCASE ASC")
@@ -84,17 +85,32 @@ interface SongDao {
     @Query("SELECT navidromeID FROM songs")
     suspend fun getAllNavidromeIds(): List<String>
 
-    @Query("SELECT * FROM songs WHERE albumId IN (:albumIds) AND mediaCategory = 'music' ORDER BY albumId, discNumber, track")
+    @Query("SELECT * FROM songs WHERE albumId IN (:albumIds) AND mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY albumId, discNumber, track")
     suspend fun getSongsByAlbumIds(albumIds: List<String>): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE artistId IN (:artistIds) AND mediaCategory = 'music' ORDER BY album, discNumber, track")
+    @Query("SELECT * FROM songs WHERE artistId IN (:artistIds) AND mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY album, discNumber, track")
     suspend fun getSongsByArtistIds(artistIds: List<String>): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE albumId = :albumId AND mediaCategory = 'music' ORDER BY discNumber, track")
+    @Query("SELECT * FROM songs WHERE mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) AND (artistId = :artistId OR artist = :artistName COLLATE NOCASE) ORDER BY album COLLATE NOCASE, discNumber, track")
+    suspend fun getSongsByArtistIdentity(artistId: String, artistName: String): List<SongEntity>
+
+    @Query("SELECT * FROM songs WHERE albumId = :albumId AND mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY discNumber, track")
     suspend fun getSongsByAlbumOnce(albumId: String): List<SongEntity>
 
-    @Query("SELECT * FROM songs WHERE album = :albumName COLLATE NOCASE AND mediaCategory = 'music' ORDER BY discNumber, track")
+    @Query("SELECT * FROM songs WHERE album = :albumName COLLATE NOCASE AND mediaCategory = 'music' AND navidromeID NOT IN (SELECT songId FROM hidden_songs) ORDER BY discNumber, track")
     suspend fun getSongsByAlbumNameOnce(albumName: String): List<SongEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun hideSong(hiddenSong: HiddenSongEntity)
+
+    @Query("DELETE FROM hidden_songs WHERE songId = :songId")
+    suspend fun unhideSong(songId: String)
+
+    @Query("SELECT songId FROM hidden_songs")
+    suspend fun getHiddenSongIds(): List<String>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM hidden_songs WHERE songId = :songId)")
+    suspend fun isSongHidden(songId: String): Boolean
 
     /**
      * Replaces all songs atomically.

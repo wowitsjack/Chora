@@ -2,6 +2,8 @@ package com.craftworks.music.data.datasource.navidrome
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -10,6 +12,7 @@ import com.craftworks.music.data.NavidromeProvider
 import com.craftworks.music.data.navidromeServerUrlConnectionProblem
 import com.craftworks.music.data.normalizeNavidromeServerUrl
 import com.craftworks.music.data.model.Lyric
+import com.craftworks.music.data.model.DiscoveryMixRequest
 import com.craftworks.music.data.model.MediaData
 import com.craftworks.music.data.model.NavidromeBookmark
 import com.craftworks.music.data.model.toLyric
@@ -32,20 +35,34 @@ import com.craftworks.music.providers.navidrome.parseNavidromeRadioJSON
 import com.craftworks.music.providers.navidrome.parseNavidromeRandomSongsJSON
 import com.craftworks.music.providers.navidrome.parseNavidromeSearch3JSON
 import com.craftworks.music.providers.navidrome.parseNavidromeSimilarSongsJSON
+import com.craftworks.music.providers.navidrome.parseNavidromeSmartMixJSON
 import com.craftworks.music.providers.navidrome.parseNavidromeStatus
 import com.craftworks.music.providers.navidrome.parseNavidromeSyncedLyricsJSON
+import com.craftworks.music.providers.navidrome.isSuccessfulSubsonicResponse
+import com.craftworks.music.providers.navidrome.StemSplitResponse
+import com.craftworks.music.providers.navidrome.buildNavidromeStemStreamUrl
+import com.craftworks.music.providers.navidrome.parseNavidromeStemSplitJSON
+import com.craftworks.music.providers.navidrome.supportedStemNames
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cache.storage.FileStorage
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
+import io.ktor.client.request.forms.InputProvider
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +78,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import kotlinx.io.asSource
+import kotlinx.io.buffered
 
 @Singleton
 class NavidromeDataSource @Inject constructor(
@@ -101,8 +120,12 @@ class NavidromeDataSource @Inject constructor(
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 15_000
+                connectTimeoutMillis = 8_000
                 socketTimeoutMillis = 30_000
+            }
+            install(HttpRequestRetry) {
+                retryOnExceptionIf(maxRetries = 2) { _, cause -> cause is IOException }
+                delayMillis { retry -> retry * 300L }
             }
         }
     }
@@ -150,8 +173,12 @@ class NavidromeDataSource @Inject constructor(
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 15_000
+                connectTimeoutMillis = 8_000
                 socketTimeoutMillis = 30_000
+            }
+            install(HttpRequestRetry) {
+                retryOnExceptionIf(maxRetries = 2) { _, cause -> cause is IOException }
+                delayMillis { retry -> retry * 300L }
             }
         }
     }
@@ -258,6 +285,18 @@ class NavidromeDataSource @Inject constructor(
                 endpoint.startsWith("getStarred") -> { parsedData.addAll(parseNavidromeFavouritesJSON(responseContent, serverUrl, server.username, server.password)) }
                 endpoint.startsWith("getRandomSongs") -> { parsedData.addAll(parseNavidromeRandomSongsJSON(responseContent, serverUrl, server.username, server.password)) }
                 endpoint.startsWith("getSimilarSongs2") -> { parsedData.addAll(parseNavidromeSimilarSongsJSON(responseContent, serverUrl, server.username, server.password)) }
+                endpoint.startsWith("getSmartMix") -> { parsedData.addAll(parseNavidromeSmartMixJSON(responseContent, serverUrl, server.username, server.password)) }
+                endpoint.startsWith("startStemSplit") || endpoint.startsWith("getStemSplitStatus") -> {
+                    parseNavidromeStemSplitJSON(responseContent)?.let(parsedData::add)
+                }
+
+                endpoint.startsWith("createPlaylist") ||
+                    endpoint.startsWith("updatePlaylist") ||
+                    endpoint.startsWith("deletePlaylist") -> {
+                    if (isSuccessfulSubsonicResponse(responseContent)) {
+                        parsedData.add(true)
+                    }
+                }
 
                 endpoint.startsWith("star") -> { NavidromeManager.setSyncingStatus(false) }
                 endpoint.startsWith("unstar") -> { NavidromeManager.setSyncingStatus(false) }
@@ -380,6 +419,70 @@ class NavidromeDataSource @Inject constructor(
         ).filterIsInstance<MediaItem>().firstOrNull()
     }
 
+    suspend fun replaceNavidromeMediaFile(songId: String, uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        val server = NavidromeManager.getCurrentServer()
+            ?: throw IOException("No active Navidrome server")
+        val serverUrl = normalizeNavidromeServerUrl(server.url)
+            ?: throw IOException("Invalid Navidrome server URL")
+        navidromeServerUrlConnectionProblem(serverUrl)?.let { throw IOException(it) }
+
+        val salt = generateSalt(8)
+        val token = md5Hash(server.password + salt)
+        val username = encode(server.username)
+        val endpoint = "replaceMediaFile.view?id=${encode(songId)}&f=json"
+        val url = "$serverUrl/rest/$endpoint&u=$username&t=$token&s=$salt&v=1.16.1&c=Chora"
+
+        var displayName = "replacement"
+        var contentLength: Long? = null
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    .takeIf { it >= 0 }
+                    ?.let { displayName = cursor.getString(it) ?: displayName }
+                cursor.getColumnIndex(OpenableColumns.SIZE)
+                    .takeIf { it >= 0 && !cursor.isNull(it) }
+                    ?.let { contentLength = cursor.getLong(it).takeIf { size -> size >= 0L } }
+            }
+        }
+        val safeName = displayName.replace("\"", "").replace("\r", "").replace("\n", "")
+        val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val activeClient = if (server.allowSelfSignedCert == true) insecureClient else client
+        val response = activeClient.post(url) {
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append(
+                            key = "file",
+                            value = InputProvider(contentLength) {
+                                val stream = context.contentResolver.openInputStream(uri)
+                                    ?: throw IOException("Selected file is unavailable")
+                                stream.asSource().buffered()
+                            },
+                            headers = Headers.build {
+                                append(HttpHeaders.ContentType, mimeType)
+                                append(HttpHeaders.ContentDisposition, "filename=\"$safeName\"")
+                            }
+                        )
+                    }
+                )
+            )
+        }
+        if (response.status != HttpStatusCode.OK) {
+            throw IOException("replaceMediaFile returned HTTP ${response.status.value}")
+        }
+        val body = response.bodyAsText()
+        if (!isSuccessfulSubsonicResponse(body)) {
+            throw IOException("Navidrome rejected the replacement file")
+        }
+        true
+    }
+
     suspend fun getRandomSongs(
         size: Int = 50,
         ignoreCachedResponse: Boolean = true,
@@ -405,6 +508,85 @@ class NavidromeDataSource @Inject constructor(
             requireSuccess = true
         ).filterIsInstance<MediaItem>()
     }
+
+    suspend fun getSmartMix(
+        request: DiscoveryMixRequest,
+        ignoreCachedResponse: Boolean = true
+    ): List<MediaItem> = withContext(Dispatchers.IO) {
+        val parameters = mutableListOf(
+            "mode=${encode(request.mode.apiValue)}",
+            "count=${request.count.coerceIn(1, 200)}",
+            "includeSeeds=${request.includeSeeds}",
+            "f=json"
+        )
+        request.seedIds.filter(String::isNotBlank).forEach { parameters += "seedId=${encode(it)}" }
+        request.excludeIds.filter(String::isNotBlank).forEach { parameters += "excludeId=${encode(it)}" }
+        request.randomSeed?.takeIf(String::isNotBlank)?.let { parameters += "randomSeed=${encode(it)}" }
+        request.endId?.takeIf(String::isNotBlank)?.let { parameters += "endId=${encode(it)}" }
+        request.mood?.takeIf(String::isNotBlank)?.let { parameters += "mood=${encode(it)}" }
+        request.voice?.takeIf(String::isNotBlank)?.let { parameters += "voice=${encode(it)}" }
+        request.energyCurve?.takeIf(String::isNotBlank)?.let { parameters += "energyCurve=${encode(it)}" }
+        request.intent?.takeIf(String::isNotBlank)?.let {
+            parameters += "intent=${encode(it)}"
+            parameters += "strict=${request.strictIntent}"
+        }
+        request.discovery?.let { parameters += "discovery=${it.coerceIn(0f, 1f)}" }
+        request.variety?.let { parameters += "variety=${it.coerceIn(0f, 1f)}" }
+        request.energy?.let { parameters += "energy=${it.coerceIn(0f, 1f)}" }
+        request.valence?.let { parameters += "valence=${it.coerceIn(0f, 1f)}" }
+        request.danceability?.let { parameters += "danceability=${it.coerceIn(0f, 1f)}" }
+
+        getRequest(
+            endpoint = "getSmartMix.view?${parameters.joinToString("&")}",
+            ignoreCachedResponse = ignoreCachedResponse,
+            requireSuccess = true
+        ).filterIsInstance<MediaItem>()
+    }
+
+    suspend fun startStemSplit(songId: String, profile: String, bitrate: Int): StemSplitResponse = withContext(Dispatchers.IO) {
+        val encodedId = encode(songId)
+        getRequest(
+            endpoint = "startStemSplit.view?id=$encodedId&profile=${encode(profile)}&bitrate=$bitrate&f=json",
+            ignoreCachedResponse = true,
+            requireSuccess = true
+        ).filterIsInstance<StemSplitResponse>().firstOrNull()
+            ?: throw IOException("startStemSplit returned no status")
+    }
+
+    suspend fun getStemSplitStatus(songId: String, profile: String, bitrate: Int): StemSplitResponse = withContext(Dispatchers.IO) {
+        val encodedId = encode(songId)
+        getRequest(
+            endpoint = "getStemSplitStatus.view?id=$encodedId&profile=${encode(profile)}&bitrate=$bitrate&f=json",
+            ignoreCachedResponse = true,
+            requireSuccess = true
+        ).filterIsInstance<StemSplitResponse>().firstOrNull()
+            ?: throw IOException("getStemSplitStatus returned no status")
+    }
+
+    fun buildStemStreamUrls(
+        songId: String,
+        stems: List<String>,
+        profile: String,
+        bitrate: Int
+    ): Map<String, String> {
+        val server = NavidromeManager.getCurrentServer()
+            ?: throw IllegalArgumentException("No active Navidrome server")
+        val salt = generateSalt(8)
+        return stems.associateWith { stem ->
+            buildNavidromeStemStreamUrl(
+                serverUrl = server.url,
+                username = server.username,
+                password = server.password,
+                songId = songId,
+                stem = stem,
+                profile = profile,
+                bitrate = bitrate,
+                salt = salt
+            )
+        }
+    }
+
+    private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
     suspend fun scrobbleSong(songId: String, submission: Boolean) = withContext(Dispatchers.IO) {
         val encodedId = URLEncoder.encode(songId, "UTF-8")
@@ -455,7 +637,7 @@ class NavidromeDataSource @Inject constructor(
         requireSuccess: Boolean = false
     ): List<MediaData.Artist> = withContext(Dispatchers.IO) {
         getRequest(
-            "getArtists.view?f=json",
+            "getArtists.view?f=json&primaryArtistRole=artist",
             musicFolderIds,
             ignoreCachedResponse,
             requireSuccess = requireSuccess
@@ -467,7 +649,7 @@ class NavidromeDataSource @Inject constructor(
     ): List<MediaItem> = withContext(Dispatchers.IO) {
         val encodedId = URLEncoder.encode(artistId, "UTF-8")
         getRequest(
-            "getArtist.view?id=$encodedId&f=json",
+            "getArtist.view?id=$encodedId&f=json&primaryArtistRole=artist",
             null,
             ignoreCachedResponse
         ).filterIsInstance<MediaItem>()
@@ -527,7 +709,7 @@ class NavidromeDataSource @Inject constructor(
         name: String, songIds: List<String>? = null, ignoreCachedResponse: Boolean = false
     ): Boolean = withContext(Dispatchers.IO) {
         val encodedName = URLEncoder.encode(name, "UTF-8")
-        var endpoint = "createPlaylist.view?name=$encodedName"
+        var endpoint = "createPlaylist.view?name=$encodedName&f=json"
         songIds?.forEach { songId ->
             val encodedSongId = URLEncoder.encode(songId, "UTF-8")
             endpoint += "&songId=$encodedSongId"
@@ -542,7 +724,7 @@ class NavidromeDataSource @Inject constructor(
         val encodedPlaylistId = URLEncoder.encode(playlistId, "UTF-8")
         val encodedSongId = URLEncoder.encode(songId, "UTF-8")
         val response = getRequest(
-            "updatePlaylist.view?playlistId=$encodedPlaylistId&songIdToAdd=$encodedSongId",
+            "updatePlaylist.view?playlistId=$encodedPlaylistId&songIdToAdd=$encodedSongId&f=json",
             null,
             ignoreCachedResponse
         )
@@ -554,7 +736,7 @@ class NavidromeDataSource @Inject constructor(
     ): Boolean = withContext(Dispatchers.IO) {
         val encodedPlaylistId = URLEncoder.encode(playlistId, "UTF-8")
         val response = getRequest(
-            "updatePlaylist.view?playlistId=$encodedPlaylistId&songIndexToRemove=$songIndexToRemove",
+            "updatePlaylist.view?playlistId=$encodedPlaylistId&songIndexToRemove=$songIndexToRemove&f=json",
             null,
             ignoreCachedResponse
         )
@@ -566,7 +748,7 @@ class NavidromeDataSource @Inject constructor(
     ): Boolean = withContext(Dispatchers.IO) {
         val encodedId = URLEncoder.encode(playlistId, "UTF-8")
         val response = getRequest(
-            "deletePlaylist.view?id=$encodedId",
+            "deletePlaylist.view?id=$encodedId&f=json",
             null,
             ignoreCachedResponse
         )

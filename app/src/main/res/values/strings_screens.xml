@@ -8,7 +8,7 @@
     <string name="random_songs">Explore From Your Library</string>
     <string name="Home_Discovery_Eyebrow">Discovery</string>
     <string name="Home_Discovery_Title">Need something to play?</string>
-    <string name="Home_Discovery_Description">Build a fresh 50-song mix from across your library. Nothing is saved.</string>
+    <string name="Home_Discovery_Description">Pick a mood. We’ll queue the next 50.</string>
     <string name="Home_Discovery_Action">Build Me a Playlist</string>
     <string name="Home_Discovery_Building">Building…</string>
     <string name="Home_Discovery_Empty">No playable songs were found.</string>
@@ -39,9 +39,9 @@
     <string name="Home_Audiobooks_Count">%1$d books in your library</string>
 
     <!-- Mixes -->
-    <string name="Action_Instant_Mix">Instant Mix</string>
-    <string name="Instant_Mix_Building">Building an instant mix…</string>
-    <string name="Instant_Mix_Error">Couldn’t build an instant mix.</string>
+    <string name="Action_Instant_Mix">Start Radio</string>
+    <string name="Instant_Mix_Building">Starting radio…</string>
+    <string name="Instant_Mix_Error">Couldn’t start radio.</string>
 
     <!-- Queue -->
     <string name="Queue_Empty_Title">Your queue is empty</string>

@@ -2,6 +2,7 @@
 
 package com.craftworks.music.ui.playing
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Spring
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,6 +65,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -76,8 +79,12 @@ import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.formatMilliseconds
 import com.craftworks.music.managers.SleepTimerManager
 import com.craftworks.music.player.AudiobookPlaybackHelper
+import com.craftworks.music.player.ChoraMediaLibraryService
+import com.craftworks.music.player.stablePlaybackPosition
 import com.craftworks.music.providers.navidrome.downloadNavidromeSong
-import com.craftworks.music.providers.navidrome.setNavidromeStar
+import com.craftworks.music.data.model.isFavorite
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.craftworks.music.ui.elements.bounceClick
 import com.craftworks.music.ui.elements.dialogs.SleepTimerDialog
 import com.craftworks.music.ui.elements.moveClick
@@ -114,16 +121,32 @@ fun PlaybackProgressSlider(
     var isInteracting by remember { mutableStateOf(false) }
 
     var isPlaying by remember { mutableStateOf(false) }
+    var lastPositionSampleAt by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
 
     LaunchedEffect(mediaController, isPlaying) {
         if (mediaController != null && isPlaying) {
             while (isActive && !isInteracting) {
-                currentValue = mediaController.currentPosition
+                val now = SystemClock.elapsedRealtime()
+                currentValue = stablePlaybackPosition(
+                    previousPositionMs = currentValue,
+                    reportedPositionMs = mediaController.currentPosition,
+                    elapsedMs = now - lastPositionSampleAt,
+                    isPlaying = true,
+                    durationMs = currentDuration ?: 0L
+                )
+                lastPositionSampleAt = now
                 delay(100L)  // Update 10x per second for smooth progress
             }
         } else {
             if (mediaController != null) {
-                currentValue = mediaController.currentPosition
+                currentValue = stablePlaybackPosition(
+                    previousPositionMs = currentValue,
+                    reportedPositionMs = mediaController.currentPosition,
+                    elapsedMs = 0L,
+                    isPlaying = false,
+                    durationMs = currentDuration ?: 0L
+                )
+                lastPositionSampleAt = SystemClock.elapsedRealtime()
             }
         }
     }
@@ -145,8 +168,26 @@ fun PlaybackProgressSlider(
                 reason: Int
             ) {
                 super.onPositionDiscontinuity(oldPosition, newPosition, reason)
-                if (reason != Player.DISCONTINUITY_REASON_SEEK)
-                    currentValue = newPosition.positionMs
+                if (
+                    reason == Player.DISCONTINUITY_REASON_SEEK ||
+                    reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT ||
+                    reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION
+                ) {
+                    currentValue = stablePlaybackPosition(
+                        previousPositionMs = currentValue,
+                        reportedPositionMs = newPosition.positionMs,
+                        elapsedMs = 0L,
+                        isPlaying = mediaController.isPlaying,
+                        durationMs = currentDuration ?: 0L,
+                        allowDiscontinuity = true
+                    )
+                    lastPositionSampleAt = SystemClock.elapsedRealtime()
+                }
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                currentValue = mediaController.currentPosition.coerceAtLeast(0L)
+                lastPositionSampleAt = SystemClock.elapsedRealtime()
             }
         }
 
@@ -155,6 +196,7 @@ fun PlaybackProgressSlider(
         // Initial check in case state changed before listener was attached or for initial setup
         isPlaying = mediaController.isPlaying
         currentValue = mediaController.currentPosition
+        lastPositionSampleAt = SystemClock.elapsedRealtime()
 
         onDispose {
             mediaController.removeListener(listener)
@@ -452,12 +494,20 @@ fun LyricsButton(
     size: Dp = 64.dp,
 ){
     val lyrics by LyricsState.lyrics.collectAsStateWithLifecycle()
+    val isLoading by LyricsState.isLoading.collectAsStateWithLifecycle()
 
     Button(
-        onClick = { lyricsOpen = !lyricsOpen },
+        onClick = {
+            if (lyricsOpen) {
+                lyricsOpen = false
+            } else {
+                lyricsOpen = true
+                ChoraMediaLibraryService.getInstance()?.requestLyricsForCurrentItem()
+            }
+        },
         shape = RoundedCornerShape(12.dp),
-        modifier = // Disable bounce click if no lyrics are present
-        if (lyrics.isNotEmpty())
+        modifier =
+        if (lyrics.isNotEmpty() || isLoading)
             Modifier
                 .bounceClick()
                 .height(size + 6.dp)
@@ -470,11 +520,16 @@ fun LyricsButton(
             contentColor = color.copy(0.5f),
             disabledContentColor = color.copy(0.25f)
         ),
-        enabled = lyrics.isNotEmpty()
+        enabled = true
     ) {
-        Crossfade(targetState = lyricsOpen, label = "Lyrics Icon Crossfade") { open ->
-            when (open) {
-                true -> Icon(
+        Crossfade(targetState = isLoading to lyricsOpen, label = "Lyrics Icon Crossfade") { (loading, open) ->
+            when {
+                loading -> CircularProgressIndicator(
+                    modifier = Modifier.size(size * 0.55f),
+                    color = color,
+                    strokeWidth = 2.dp
+                )
+                open -> Icon(
                     imageVector = ImageVector.vectorResource(R.drawable.lyrics_active),
                     contentDescription = "Close Lyrics",
                     modifier = Modifier
@@ -482,7 +537,7 @@ fun LyricsButton(
                         .size(size)
                 )
 
-                false -> Icon(
+                else -> Icon(
                     imageVector = ImageVector.vectorResource(R.drawable.lyrics_inactive),
                     contentDescription = "View Lyrics",
                     modifier = Modifier
@@ -569,6 +624,7 @@ fun DownloadButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
 @Composable
 fun FavoriteButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Boolean) {
     val coroutineScope = rememberCoroutineScope()
+    val songActionsViewModel: SongActionsViewModel = hiltViewModel()
     // Use rememberSaveable to persist starred state across configuration changes
     // This prevents flickering when folding/unfolding the device
     var isStarred by rememberSaveable { mutableStateOf(false) }
@@ -576,23 +632,22 @@ fun FavoriteButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
     // Sync with metadata when song changes (using navidromeID as key to detect song change)
     val songId = metadata?.extras?.getString("navidromeID")
     LaunchedEffect(songId) {
-        isStarred = metadata?.extras?.getBoolean("starred") ?: false
+        isStarred = metadata?.isFavorite() ?: false
     }
 
     Button(
         onClick = {
             coroutineScope.launch {
                 metadata?.extras?.getString("navidromeID")?.let { songId ->
-                    if (!songId.startsWith("Local_")) {
-                        val previousState = isStarred
-                        isStarred = !isStarred // Optimistic update
-                        try {
-                            setNavidromeStar(isStarred, id = songId)
-                        } catch (e: Exception) {
-                            // Revert optimistic update on failure
-                            isStarred = previousState
-                            Log.e("FavoriteButton", "Failed to update star status", e)
-                        }
+                    val previousState = isStarred
+                    isStarred = !isStarred
+                    val item = MediaItem.Builder()
+                        .setMediaId(songId)
+                        .setMediaMetadata(metadata)
+                        .build()
+                    if (!songActionsViewModel.setFavorite(item, isStarred)) {
+                        isStarred = previousState
+                        Log.e("FavoriteButton", "Failed to update star status")
                     }
                 }
             }

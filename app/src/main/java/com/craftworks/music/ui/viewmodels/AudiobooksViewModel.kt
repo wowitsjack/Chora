@@ -10,7 +10,10 @@ import com.craftworks.music.data.repository.DownloadRepository
 import com.craftworks.music.player.SongHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -21,7 +24,12 @@ class AudiobooksViewModel @Inject constructor(
     private val progressRepository: AudiobookProgressRepository,
     private val downloadRepository: DownloadRepository
 ) : ViewModel() {
-    val books: StateFlow<List<AudiobookBook>> = audiobookRepository.books.stateIn(
+    private val _hasLoaded = MutableStateFlow(false)
+    val hasLoaded: StateFlow<Boolean> = _hasLoaded.asStateFlow()
+
+    val books: StateFlow<List<AudiobookBook>> = audiobookRepository.books
+        .onEach { _hasLoaded.value = true }
+        .stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = emptyList()

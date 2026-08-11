@@ -72,7 +72,7 @@ class AlbumRepository @Inject constructor(
 
     suspend fun getAlbum(albumId: String, ignoreCachedResponse: Boolean = false): List<MediaItem>? = coroutineScope {
         if (albumId.startsWith("Local_")) {
-            localDataSource.getLocalAlbum(albumId)
+            localDataSource.getLocalAlbum(albumId)?.let { withoutHiddenSongs(it) }
         } else {
             // Cache-first strategy: check Room database first
             if (!ignoreCachedResponse) {
@@ -97,6 +97,7 @@ class AlbumRepository @Inject constructor(
                 ?.filter { item ->
                     item.mediaMetadata.extras?.getString("mediaCategory") != MediaCategory.AUDIOBOOK
                 }
+                ?.let { withoutHiddenSongs(it) }
         }
     }
 
@@ -130,5 +131,14 @@ class AlbumRepository @Inject constructor(
             })
 
         deferredAlbums.awaitAll().flatten()
+    }
+
+    private suspend fun withoutHiddenSongs(items: List<MediaItem>): List<MediaItem> {
+        val hiddenIds = songDao.getHiddenSongIds().toHashSet()
+        if (hiddenIds.isEmpty()) return items
+        return items.filterNot { item ->
+            item.mediaMetadata.mediaType != androidx.media3.common.MediaMetadata.MEDIA_TYPE_ALBUM &&
+                (item.mediaMetadata.extras?.getString("navidromeID") ?: item.mediaId) in hiddenIds
+        }
     }
 }

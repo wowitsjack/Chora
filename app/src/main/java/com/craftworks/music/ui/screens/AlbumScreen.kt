@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,12 +36,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.session.MediaController
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import com.craftworks.music.R
@@ -54,6 +58,7 @@ import com.craftworks.music.ui.playing.dpToPx
 import com.craftworks.music.ui.util.rememberFoldableState
 import com.craftworks.music.ui.util.responsiveGridCells
 import com.craftworks.music.ui.viewmodels.AlbumScreenViewModel
+import com.craftworks.music.ui.viewmodels.SongActionsViewModel
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
@@ -67,7 +72,11 @@ fun AlbumScreen(
 ) {
     val albums by viewModel.allAlbums.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+    val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
+    val hasLoaded by viewModel.hasLoaded.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val songActionsViewModel: SongActionsViewModel = hiltViewModel()
     val foldableState = rememberFoldableState()
     val gridColumns = responsiveGridCells()
 
@@ -85,6 +94,21 @@ fun AlbumScreen(
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
 
     var showSortMenu by remember { mutableStateOf(false) }
+
+    val startAlbumRadio: (MediaItem) -> Unit = { album ->
+        coroutineScope.launch {
+            Toast.makeText(context, "Starting album radio…", Toast.LENGTH_SHORT).show()
+            val albumId = album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId
+            val seeds = viewModel.getAlbum(albumId)
+                .filter { it.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_ALBUM }
+            val mix = runCatching { songActionsViewModel.buildRadio(seeds) }.getOrDefault(emptyList())
+            if (mix.isNotEmpty()) {
+                SongHelper.play(mix, 0, mediaController)
+            } else {
+                Toast.makeText(context, "Couldn’t start album radio", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     PullToRefreshBox(
         state = state,
@@ -157,7 +181,10 @@ fun AlbumScreen(
                                     },
                                     true,
                                     viewModel,
-                                    gridColumns
+                                    gridColumns,
+                                    onStartRadio = startAlbumRadio,
+                                    showAlphabetScroller = false,
+                                    showEmptyState = false
                                 )
                             }
                         },
@@ -233,7 +260,10 @@ fun AlbumScreen(
                     },
                     false,
                     viewModel,
-                    gridColumns
+                    gridColumns,
+                    onStartRadio = startAlbumRadio,
+                    showAlphabetScroller = sortOrder == SortOrder.ALPHABETICAL,
+                    showEmptyState = hasLoaded && !isRefreshing
                 )
             }
         }

@@ -4,6 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -13,6 +19,9 @@ import coil.request.ImageRequest
 import androidx.compose.ui.platform.LocalContext
 import com.craftworks.music.ui.elements.GeneratedAlbumArtStatic
 import com.craftworks.music.ui.elements.artworkDataAtSize
+import com.craftworks.music.ui.elements.artworkRenderKey
+import com.craftworks.music.ui.elements.artworkRequestKey
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun IpodArtwork(
@@ -20,9 +29,13 @@ internal fun IpodArtwork(
     title: String,
     artist: String?,
     identity: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    requestDelayMillis: Long = 0L
 ) {
     val artworkValue = artwork?.toString()
+    val artworkData = artworkDataAtSize(artwork, 1024)
+    val requestKey = artworkRequestKey("ipod", identity, artworkData, 1024)
+    val renderKey = artworkRenderKey(identity, requestKey)
     val fallback: @Composable () -> Unit = {
         GeneratedAlbumArtStatic(
             title = title,
@@ -36,22 +49,34 @@ internal fun IpodArtwork(
         contentAlignment = Alignment.Center,
         modifier = modifier.background(Color.Black)
     ) {
-        if (shouldGenerateArtwork(artworkValue)) {
-            fallback()
-        } else {
-            SubcomposeAsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(artworkDataAtSize(artwork, 1024))
-                    .diskCacheKey("ipod_${identity}_art_1024")
-                    .memoryCacheKey("ipod_${identity}_art_1024")
-                    .crossfade(false)
-                    .build(),
-                contentDescription = "$title album artwork",
-                contentScale = ContentScale.Crop,
-                loading = { fallback() },
-                error = { fallback() },
-                modifier = Modifier.fillMaxSize()
-            )
+        key(renderKey) {
+            var requestReady by remember(requestDelayMillis) {
+                mutableStateOf(requestDelayMillis <= 0L)
+            }
+            LaunchedEffect(requestDelayMillis) {
+                if (requestDelayMillis > 0L) {
+                    delay(requestDelayMillis)
+                    requestReady = true
+                }
+            }
+
+            if (shouldGenerateArtwork(artworkValue) || !requestReady) {
+                fallback()
+            } else {
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(artworkData)
+                        .diskCacheKey(requestKey)
+                        .memoryCacheKey(requestKey)
+                        .crossfade(false)
+                        .build(),
+                    contentDescription = "$title album artwork",
+                    contentScale = ContentScale.Crop,
+                    loading = { fallback() },
+                    error = { fallback() },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
 }

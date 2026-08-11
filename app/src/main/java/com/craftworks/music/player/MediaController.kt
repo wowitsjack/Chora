@@ -61,41 +61,43 @@ class MediaControllerManager private constructor(context: Context) : RememberObs
         isReleasing = false
 
         synchronized(factoryLock) {
-            // Only create a new factory if one doesn't exist or the previous one completed
-            if (factory == null || factory?.isDone == true) {
-                factory = MediaController.Builder(
-                    appContext,
-                    SessionToken(appContext, ComponentName(appContext, ChoraMediaLibraryService::class.java))
-                ).buildAsync().also { newFactory ->
-                    // Add listener only to newly created factory to prevent duplicate listeners
-                    newFactory.addListener(
-                        {
-                            // MediaController is available here with controllerFuture.get()
-                            // Don't update if we're in the middle of releasing (config change)
-                            if (isReleasing) return@addListener
+            if (factory != null) return
 
-                            try {
-                                val newController = if (newFactory.isDone && !newFactory.isCancelled) {
-                                    newFactory.get()
-                                } else {
-                                    null
-                                }
-                                controller.value = newController
-                                // Only publish metadata after controller is assigned to avoid race
-                                publishCurrentMetadata(newController)
-                            } catch (e: java.util.concurrent.CancellationException) {
-                                // Expected when future is cancelled during shutdown
-                                if (!isReleasing) controller.value = null
-                            } catch (e: java.util.concurrent.ExecutionException) {
-                                // Service may be unavailable
-                                if (!isReleasing) controller.value = null
-                            } catch (e: Exception) {
-                                if (!isReleasing) controller.value = null
-                            }
-                        },
-                        MoreExecutors.directExecutor()
-                    )
-                }
+            val newFactory = MediaController.Builder(
+                appContext,
+                SessionToken(appContext, ComponentName(appContext, ChoraMediaLibraryService::class.java))
+            ).buildAsync()
+            factory = newFactory
+            newFactory.addListener(
+                {
+                    if (isReleasing || factory !== newFactory) {
+                        MediaController.releaseFuture(newFactory)
+                        return@addListener
+                    }
+
+                    try {
+                        val newController = if (!newFactory.isCancelled) newFactory.get() else null
+                        controller.value = newController
+                        publishCurrentMetadata(newController)
+                    } catch (_: java.util.concurrent.CancellationException) {
+                        handleFactoryFailure(newFactory)
+                    } catch (_: java.util.concurrent.ExecutionException) {
+                        handleFactoryFailure(newFactory)
+                    } catch (_: Exception) {
+                        handleFactoryFailure(newFactory)
+                    }
+                },
+                MoreExecutors.directExecutor()
+            )
+        }
+    }
+
+    private fun handleFactoryFailure(failedFactory: ListenableFuture<MediaController>) {
+        synchronized(factoryLock) {
+            if (factory === failedFactory) {
+                factory = null
+                controller.value = null
+                publishCurrentMetadata(null)
             }
         }
     }

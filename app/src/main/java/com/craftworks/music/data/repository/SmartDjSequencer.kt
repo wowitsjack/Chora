@@ -3,6 +3,8 @@ package com.craftworks.music.data.repository
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import com.craftworks.music.data.model.DiscoveryMetadataKeys
+import com.craftworks.music.data.model.DiscoveryMixMode
 import com.craftworks.music.data.model.MediaCategory
 import kotlin.math.abs
 
@@ -18,6 +20,8 @@ internal data class SmartDjCandidate(
     val albumKey: String = "",
     val year: Int? = null,
     val bpm: Int? = null,
+    val energy: Float? = null,
+    val camelot: String? = null,
     val isPlayable: Boolean = true,
     val isAudiobook: Boolean = false,
     val item: MediaItem? = null
@@ -26,17 +30,20 @@ internal data class SmartDjCandidate(
 internal object SmartDjSequencer {
     fun sequence(
         candidates: List<MediaItem>,
+        mode: DiscoveryMixMode = DiscoveryMixMode.SMART,
         outputLimit: Int = DISCOVERY_OUTPUT_LIMIT,
         candidateLimit: Int = DISCOVERY_CANDIDATE_LIMIT
     ): List<MediaItem> =
         sequenceCandidates(
             candidates.map { it.toSmartDjCandidate() },
+            mode = mode,
             outputLimit = outputLimit,
             candidateLimit = candidateLimit
         ).mapNotNull { it.item }
 
     internal fun sequenceCandidates(
         candidates: List<SmartDjCandidate>,
+        mode: DiscoveryMixMode = DiscoveryMixMode.SMART,
         outputLimit: Int = DISCOVERY_OUTPUT_LIMIT,
         candidateLimit: Int = DISCOVERY_CANDIDATE_LIMIT
     ): List<SmartDjCandidate> {
@@ -61,7 +68,7 @@ internal object SmartDjSequencer {
 
         val remaining = pool.toMutableList()
         val output = mutableListOf<SongProfile>()
-        var current = chooseSeed(remaining, lane)
+        var current = chooseSeed(remaining, lane, mode)
 
         output += current
         remaining.remove(current)
@@ -78,7 +85,15 @@ internal object SmartDjSequencer {
             val next = artistSpaced
                 .sortedWith(
                     compareByDescending<SongProfile> {
-                        transitionScore(current, it, recentArtists, recentAlbums)
+                        transitionScore(
+                            current = current,
+                            candidate = it,
+                            recentArtists = recentArtists,
+                            recentAlbums = recentAlbums,
+                            mode = mode,
+                            position = output.size,
+                            outputLimit = boundedOutputLimit
+                        )
                     }.thenBy { it.index }
                 )
                 .first()
@@ -131,8 +146,20 @@ internal object SmartDjSequencer {
 
     private fun chooseSeed(
         pool: List<SongProfile>,
-        lane: GenreFamily?
-    ): SongProfile =
+        lane: GenreFamily?,
+        mode: DiscoveryMixMode
+    ): SongProfile = when (mode) {
+        DiscoveryMixMode.ENERGY_RISE -> pool.sortedWith(
+            compareBy<SongProfile> { it.resolvedEnergy() }
+                .thenByDescending { seedLaneRank(it, lane) }
+                .thenBy { it.index }
+        ).first()
+        DiscoveryMixMode.COOLDOWN -> pool.sortedWith(
+            compareByDescending<SongProfile> { it.resolvedEnergy() }
+                .thenByDescending { seedLaneRank(it, lane) }
+                .thenBy { it.index }
+        ).first()
+        else ->
         pool.sortedWith(
             compareByDescending<SongProfile> { profile -> seedLaneRank(profile, lane) }
                 .thenBy { it.energy ?: 2 }
@@ -140,6 +167,7 @@ internal object SmartDjSequencer {
                     seedSupport(profile, pool, lane)
                 }.thenBy { it.index }
         ).first()
+    }
 
     private fun seedLaneRank(profile: SongProfile, lane: GenreFamily?): Int =
         when {
@@ -174,13 +202,31 @@ internal object SmartDjSequencer {
         current: SongProfile,
         candidate: SongProfile,
         recentArtists: ArrayDeque<String>,
-        recentAlbums: ArrayDeque<String>
+        recentAlbums: ArrayDeque<String>,
+        mode: DiscoveryMixMode,
+        position: Int,
+        outputLimit: Int
     ): Int {
         var score = genreCompatibility(current, candidate) * 10_000
 
         score += energyTransitionScore(current.energy, candidate.energy) * 250
         score += bpmTransitionScore(current.bpm, candidate.bpm) * 10
         score += yearTransitionScore(current.year, candidate.year)
+
+        when (mode) {
+            DiscoveryMixMode.ENERGY_RISE,
+            DiscoveryMixMode.COOLDOWN -> {
+                val desired = desiredEnergy(mode, position, outputLimit)
+                score += (4f - abs(candidate.resolvedEnergy() - desired))
+                    .coerceAtLeast(0f)
+                    .times(2_600)
+                    .toInt()
+            }
+            DiscoveryMixMode.HARMONIC -> {
+                score += harmonicCompatibility(current.camelot, candidate.camelot) * 3_200
+            }
+            else -> Unit
+        }
 
         if (candidate.artistKey.isNotBlank() && candidate.artistKey in recentArtists) {
             score -= 1_500
@@ -287,6 +333,8 @@ internal object SmartDjSequencer {
             ),
             year = metadata.recordingYear ?: metadata.releaseYear,
             bpm = extras?.readCredibleBpm(),
+            energy = extras?.readDiscoveryEnergy(),
+            camelot = extras?.readCamelot(),
             isPlayable = metadata.isPlayable != false,
             isAudiobook = isAudiobook(metadata, extras),
             item = this
@@ -322,7 +370,9 @@ internal object SmartDjSequencer {
         val genreTokens: Set<String>,
         val families: Set<GenreFamily>,
         val energy: Int?,
-        val bpm: Int?
+        val bpm: Int?,
+        val analyzerEnergy: Float?,
+        val camelot: String?
     ) {
         companion object {
             fun from(candidate: SmartDjCandidate, index: Int): SongProfile {
@@ -339,10 +389,14 @@ internal object SmartDjSequencer {
                     genreTokens = genreTokens,
                     families = families,
                     energy = genreTokens.mapNotNull(::energyForToken).maxOrNull(),
-                    bpm = candidate.bpm?.takeIf { it in 40..220 }
+                    bpm = candidate.bpm?.takeIf { it in 40..220 },
+                    analyzerEnergy = candidate.energy?.takeIf { it in 0f..1f },
+                    camelot = candidate.camelot?.trim()?.uppercase()?.takeIf(String::isNotBlank)
                 )
             }
         }
+
+        fun resolvedEnergy(): Float = analyzerEnergy?.times(4f) ?: energy?.toFloat() ?: 2f
     }
 
     private enum class GenreFamily {
@@ -568,6 +622,49 @@ internal object SmartDjSequencer {
         }
 
         return parsed?.takeIf { it in 40..220 }
+    }
+
+    private fun Bundle.readDiscoveryEnergy(): Float? = when {
+        containsKey(DiscoveryMetadataKeys.ENERGY) -> getFloat(DiscoveryMetadataKeys.ENERGY)
+        else -> null
+    }?.takeIf { it in 0f..1f }
+
+    private fun Bundle.readCamelot(): String? = listOf(
+        getString(DiscoveryMetadataKeys.CAMELOT),
+        getString("camelot"),
+        getString("keyCamelot")
+    ).firstOrNull { !it.isNullOrBlank() }
+
+    private fun desiredEnergy(mode: DiscoveryMixMode, position: Int, count: Int): Float {
+        val progress = (position.toFloat() / (count - 1).coerceAtLeast(1)).coerceIn(0f, 1f)
+        return when (mode) {
+            DiscoveryMixMode.ENERGY_RISE -> 0.4f + 3.4f * progress
+            DiscoveryMixMode.COOLDOWN -> 2.2f - 2.0f * progress
+            else -> 2f
+        }
+    }
+
+    private fun harmonicCompatibility(first: String?, second: String?): Int {
+        val left = parseCamelot(first) ?: return 0
+        val right = parseCamelot(second) ?: return 0
+        if (left == right) return 4
+        if (left.first == right.first && left.second != right.second) return 3
+        val wheelDistance = minOf(
+            (left.first - right.first).mod(12),
+            (right.first - left.first).mod(12)
+        )
+        return when {
+            left.second == right.second && wheelDistance == 1 -> 3
+            left.second == right.second && wheelDistance == 2 -> 1
+            else -> 0
+        }
+    }
+
+    private fun parseCamelot(value: String?): Pair<Int, Char>? {
+        val normalized = value?.trim()?.uppercase() ?: return null
+        val number = normalized.dropLast(1).toIntOrNull()?.takeIf { it in 1..12 } ?: return null
+        val letter = normalized.lastOrNull()?.takeIf { it == 'A' || it == 'B' } ?: return null
+        return number to letter
     }
 
     private fun String.containsAny(vararg needles: String): Boolean =

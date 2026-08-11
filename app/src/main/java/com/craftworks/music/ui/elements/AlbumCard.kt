@@ -42,8 +42,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,6 +54,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import com.craftworks.music.R
 import com.craftworks.music.managers.settings.ArtworkSettingsManager
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -65,7 +69,8 @@ fun AlbumCard(
     isInSelectionMode: Boolean = false,
     isSelected: Boolean = false,
     onSelectionChange: ((Boolean) -> Unit)? = null,
-    onEnterSelectionMode: (() -> Unit)? = null
+    onEnterSelectionMode: (() -> Unit)? = null,
+    onStartRadio: ((MediaItem) -> Unit)? = null
 ) {
     if (album.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_ALBUM) return
     val context = LocalContext.current
@@ -155,7 +160,7 @@ fun AlbumCard(
             if (useGeneratedArt) {
                 GeneratedAlbumArtStatic(
                     title = album.mediaMetadata.albumTitle?.toString() ?: "?",
-                    artist = album.mediaMetadata.albumArtist?.toString(),
+                    artist = album.mediaMetadata.artist?.toString(),
                     album = album.mediaId,
                     modifier = Modifier
                         .fillMaxSize()
@@ -182,7 +187,7 @@ fun AlbumCard(
                         if (generatedArtworkEnabled) {
                             GeneratedAlbumArtStatic(
                                 title = album.mediaMetadata.albumTitle?.toString() ?: "?",
-                                artist = album.mediaMetadata.albumArtist?.toString(),
+                                artist = album.mediaMetadata.artist?.toString(),
                                 album = album.mediaId,
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -276,7 +281,7 @@ fun AlbumCard(
         )
 
         Text(
-            text = album.mediaMetadata.albumArtist.toString(),
+            text = album.mediaMetadata.artist?.toString().orEmpty(),
             style = MaterialTheme.typography.bodySmall,
             color = LocalContentColor.current.copy(alpha = 0.75f),
             maxLines = 1,
@@ -299,6 +304,21 @@ fun AlbumCard(
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
                         contentDescription = "Play"
+                    )
+                }
+            )
+            DropdownMenuItem(
+                enabled = onStartRadio != null &&
+                    album.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == false,
+                text = { Text(stringResource(R.string.Action_Instant_Mix)) },
+                onClick = {
+                    onStartRadio?.invoke(album)
+                    showContextMenu = false
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(R.drawable.rounded_shuffle_24),
+                        contentDescription = null
                     )
                 }
             )

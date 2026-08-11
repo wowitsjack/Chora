@@ -67,6 +67,7 @@ fun SongsScreen(
 ) {
     val allSongsList by viewModel.allSongs.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+    val hasLoaded by viewModel.hasLoaded.collectAsStateWithLifecycle()
 
     val foldableState = rememberFoldableState()
     val useMultiColumn = foldableState.layoutMode in listOf(
@@ -162,7 +163,8 @@ fun SongsScreen(
                                 onDownload = { song ->
                                     downloadViewModel.queueDownload(song.mediaMetadata)
                                 },
-                                onInstantMix = songActionsViewModel::buildInstantMix
+                                onInstantMix = songActionsViewModel::buildInstantMix,
+                                showEmptyState = false
                             )
                         }
                     },
@@ -210,7 +212,8 @@ fun SongsScreen(
                     onDownload = { song ->
                         downloadViewModel.queueDownload(song.mediaMetadata)
                     },
-                    onInstantMix = songActionsViewModel::buildInstantMix
+                    onInstantMix = songActionsViewModel::buildInstantMix,
+                    showEmptyState = hasLoaded && !isRefreshing
                 )
             }
         }

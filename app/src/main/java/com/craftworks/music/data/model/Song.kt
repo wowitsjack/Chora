@@ -129,6 +129,9 @@ fun MediaData.Song.toMediaItem(): MediaItem {
                 putLong("bitrate", this@toMediaItem.bitrate?.toLong() ?: 0)
                 putBoolean("isRadio", this@toMediaItem.isRadio == true)
                 putString("mediaCategory", fields.mediaCategory)
+                putInt("playCount", this@toMediaItem.timesPlayed ?: 0)
+                putString("lastPlayed", this@toMediaItem.lastPlayed)
+                putString("starred", this@toMediaItem.starred)
                 fields.bpm?.let { putInt("bpm", it) }
                 this@toMediaItem.musicFolderId?.let { putInt("musicFolderId", it) }
                 putLong("bookmarkPosition", this@toMediaItem.bookmarkPosition.coerceAtLeast(0L))

@@ -24,6 +24,7 @@ sealed class Screen(val route: String) {
     //Playlists
     data object Playlists : Screen("playlist_screen")
     data object PlaylistDetails : Screen("playlist_details")
+    data object Favorites : Screen("favorites_screen")
 
     //Settings
     data object Setting : Screen("setting_screen")
