@@ -89,6 +89,7 @@ import com.craftworks.music.player.SongHelper
 import java.util.Calendar
 import com.craftworks.music.ui.elements.AlbumRow
 import com.craftworks.music.ui.elements.RippleEffect
+import com.craftworks.music.ui.elements.mixBuild3DEffect
 import com.craftworks.music.ui.playing.dpToPx
 import com.craftworks.music.ui.util.LayoutMode
 import com.craftworks.music.ui.util.rememberFoldableState
@@ -155,7 +156,7 @@ fun HomeScreen(
     val appearanceManager = remember { AppearanceSettingsManager(context.applicationContext) }
 
     PullToRefreshBox(
-        modifier = Modifier,
+        modifier = Modifier.mixBuild3DEffect(discoveryMixState is DiscoveryMixState.Loading),
         state = state,
         isRefreshing = isLoading,
         onRefresh = onRefresh,
@@ -509,6 +510,7 @@ private fun DiscoveryMixCard(
             DiscoveryMixMode.REDISCOVER,
             DiscoveryMixMode.ENERGY_RISE,
             DiscoveryMixMode.COOLDOWN,
+            DiscoveryMixMode.CHILLOUT,
             DiscoveryMixMode.INSTRUMENTAL,
             DiscoveryMixMode.HARMONIC
         )

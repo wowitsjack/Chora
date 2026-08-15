@@ -89,6 +89,16 @@ object NavidromeManager {
         }
     }
 
+    fun updateServer(server: NavidromeProvider) {
+        require(servers.containsKey(server.id)) { "Unknown Navidrome server" }
+        servers[server.id] = server
+        if (server.id == _currentServerId.value) {
+            _libraries.value = server.libraryIds
+        }
+        updateServersFlow()
+        saveServers()
+    }
+
     fun setServerLibraries(serverId: String, libraries: List<Pair<NavidromeLibrary, Boolean>>) {
         servers[serverId]?.libraryIds = libraries
         if (serverId == _currentServerId.value) {

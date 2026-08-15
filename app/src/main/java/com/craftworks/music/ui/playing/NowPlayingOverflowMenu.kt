@@ -1,6 +1,7 @@
 package com.craftworks.music.ui.playing
 
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.DropdownMenu
@@ -37,58 +38,60 @@ internal fun NowPlayingOverflowMenu(
     val navidromeId = extras?.getString("navidromeID")
     val isServerSong = !navidromeId.isNullOrBlank() && !navidromeId.startsWith("Local_")
 
-    IconButton(
-        enabled = song != null,
-        modifier = Modifier.size(size),
-        onClick = { expanded = true }
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.MoreVert,
-            contentDescription = "More song actions",
-            tint = color,
-            modifier = Modifier.size(size * 0.5f)
-        )
-    }
-    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-        DropdownMenuItem(
-            text = { Text("Go to artist") },
-            enabled = hasArtist,
-            onClick = {
-                expanded = false
-                onGoToArtist()
-            }
-        )
-        DropdownMenuItem(
-            text = { Text("Go to album") },
-            enabled = hasAlbum,
-            onClick = {
-                expanded = false
-                onGoToAlbum()
-            }
-        )
-        DropdownMenuItem(
-            text = { Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites") },
-            enabled = !navidromeId.isNullOrBlank(),
-            onClick = {
-                expanded = false
-                onToggleFavorite()
-            }
-        )
-        DropdownMenuItem(
-            text = { Text("Hide from library") },
-            enabled = !navidromeId.isNullOrBlank(),
-            onClick = {
-                expanded = false
-                onHide()
-            }
-        )
-        DropdownMenuItem(
-            text = { Text("Replace audio file") },
-            enabled = isServerSong,
-            onClick = {
-                expanded = false
-                onReplace()
-            }
-        )
+    Box(modifier = Modifier.size(size)) {
+        IconButton(
+            enabled = song != null,
+            modifier = Modifier.size(size),
+            onClick = { expanded = true }
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = "More song actions",
+                tint = color,
+                modifier = Modifier.size(size * 0.5f)
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Go to artist") },
+                enabled = hasArtist,
+                onClick = {
+                    expanded = false
+                    onGoToArtist()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Go to album") },
+                enabled = hasAlbum,
+                onClick = {
+                    expanded = false
+                    onGoToAlbum()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites") },
+                enabled = !navidromeId.isNullOrBlank(),
+                onClick = {
+                    expanded = false
+                    onToggleFavorite()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Hide from library") },
+                enabled = !navidromeId.isNullOrBlank(),
+                onClick = {
+                    expanded = false
+                    onHide()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Replace audio file") },
+                enabled = isServerSong,
+                onClick = {
+                    expanded = false
+                    onReplace()
+                }
+            )
+        }
     }
 }

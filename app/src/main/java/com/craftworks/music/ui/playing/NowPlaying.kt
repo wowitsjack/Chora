@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -42,6 +43,7 @@ import com.craftworks.music.data.model.isFavorite
 import com.craftworks.music.ui.util.LayoutMode
 import com.craftworks.music.ui.util.rememberFoldableState
 import com.craftworks.music.ui.viewmodels.SongActionsViewModel
+import com.craftworks.music.ui.viewmodels.DownloadViewModel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,6 +112,50 @@ fun NowPlayingContent(
     ) { mutableStateOf(currentSong?.isFavorite() == true) }
     val coroutineScope = rememberCoroutineScope()
     val actionViewModel = if (!view.isInEditMode) hiltViewModel<SongActionsViewModel>() else null
+    val downloadViewModel = if (!view.isInEditMode) hiltViewModel<DownloadViewModel>() else null
+    var downloadQueuedSongId by remember { mutableStateOf<String?>(null) }
+    val currentSongId = currentSong?.mediaMetadata?.extras?.getString("navidromeID")
+        ?: metadata?.extras?.getString("navidromeID")
+    val actionsEnabled = metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
+        !currentSongId.isNullOrBlank()
+    val downloadEnabled = actionsEnabled && currentSongId?.startsWith("Local_") == false
+
+    val onDownload: () -> Unit = {
+        currentSong?.takeIf { downloadEnabled }?.let { song ->
+            downloadViewModel?.queueDownload(song.mediaMetadata)
+            downloadQueuedSongId = currentSongId
+            Toast.makeText(context, "Download queued", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val onToggleFavorite: () -> Unit = {
+        currentSong?.let { song ->
+            actionViewModel?.let { viewModel ->
+                val desired = !menuIsFavorite
+                coroutineScope.launch {
+                    if (viewModel.setFavorite(song, desired)) {
+                        menuIsFavorite = desired
+                    } else {
+                        Toast.makeText(context, "Could not update Favorites", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+    val onHide: () -> Unit = {
+        currentSong?.let { song ->
+            actionViewModel?.let { viewModel ->
+                coroutineScope.launch {
+                    if (viewModel.hideSong(song)) {
+                        val index = mediaController?.currentMediaItemIndex ?: -1
+                        if (index >= 0) mediaController?.removeMediaItem(index)
+                        Toast.makeText(context, "Hidden from library", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Could not hide song", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
     val replacementPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -125,6 +171,10 @@ fun NowPlayingContent(
                 ).show()
             }
         }
+    }
+
+    BackHandler(enabled = lyricsOpen) {
+        lyricsOpen = false
     }
 
     val overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit = { color, size ->
@@ -144,31 +194,8 @@ fun NowPlayingContent(
                     ?.takeIf(String::isNotBlank)
                     ?.let(onGoToAlbum)
             },
-            onToggleFavorite = {
-                val song = currentSong ?: return@NowPlayingOverflowMenu
-                val viewModel = actionViewModel ?: return@NowPlayingOverflowMenu
-                val desired = !menuIsFavorite
-                coroutineScope.launch {
-                    if (viewModel.setFavorite(song, desired)) {
-                        menuIsFavorite = desired
-                    } else {
-                        Toast.makeText(context, "Could not update Favorites", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            },
-            onHide = {
-                val song = currentSong ?: return@NowPlayingOverflowMenu
-                val viewModel = actionViewModel ?: return@NowPlayingOverflowMenu
-                coroutineScope.launch {
-                    if (viewModel.hideSong(song)) {
-                        val index = mediaController?.currentMediaItemIndex ?: -1
-                        if (index >= 0) mediaController?.removeMediaItem(index)
-                        Toast.makeText(context, "Hidden from library", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(context, "Could not hide song", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            },
+            onToggleFavorite = onToggleFavorite,
+            onHide = onHide,
             onReplace = {
                 currentSong?.let {
                     replacementSong = it
@@ -259,6 +286,13 @@ fun NowPlayingContent(
             onOpenStemMixer = {
                 mediaController?.currentMediaItem?.let { stemMixerSong = it }
             },
+            isFavorite = menuIsFavorite,
+            downloadQueued = downloadQueuedSongId == currentSongId,
+            actionsEnabled = actionsEnabled,
+            downloadEnabled = downloadEnabled,
+            onDownload = onDownload,
+            onToggleFavorite = onToggleFavorite,
+            onHide = onHide,
             overflowMenu = overflowMenu
         )
     } else {
@@ -269,6 +303,13 @@ fun NowPlayingContent(
             onOpenStemMixer = {
                 mediaController?.currentMediaItem?.let { stemMixerSong = it }
             },
+            isFavorite = menuIsFavorite,
+            downloadQueued = downloadQueuedSongId == currentSongId,
+            actionsEnabled = actionsEnabled,
+            downloadEnabled = downloadEnabled,
+            onDownload = onDownload,
+            onToggleFavorite = onToggleFavorite,
+            onHide = onHide,
             overflowMenu = overflowMenu
         )
     }

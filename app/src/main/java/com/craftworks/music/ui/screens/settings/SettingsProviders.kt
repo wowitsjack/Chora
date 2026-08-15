@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import com.craftworks.music.R
+import com.craftworks.music.data.NavidromeProvider
 import com.craftworks.music.data.model.Screen
 import com.craftworks.music.managers.LocalProviderManager
 import com.craftworks.music.managers.NavidromeManager
@@ -59,6 +60,7 @@ fun S_ProviderScreen(navHostController: NavHostController = rememberNavControlle
     val context = LocalContext.current.applicationContext
 
     var showNavidromeServerDialog by remember { mutableStateOf(false) }
+    var editingServer by remember { mutableStateOf<NavidromeProvider?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -111,14 +113,22 @@ fun S_ProviderScreen(navHostController: NavHostController = rememberNavControlle
 
                 // Then Navidrome Providers
                 navidromeServers.forEach { server ->
-                    key(server.url) {
-                        NavidromeProviderCard(server)
+                    key(server.id) {
+                        NavidromeProviderCard(
+                            server = server,
+                            onEdit = {
+                                editingServer = it
+                                showNavidromeServerDialog = true
+                                navidromeStatus.value = ""
+                            }
+                        )
                     }
                 }
             }
 
             FloatingActionButton(
                 onClick = {
+                    editingServer = null
                     showNavidromeServerDialog = true
                     navidromeStatus.value = ""
                 },
@@ -134,5 +144,11 @@ fun S_ProviderScreen(navHostController: NavHostController = rememberNavControlle
     }
 
     if(showNavidromeServerDialog)
-        CreateMediaProviderDialog(setShowDialog = { showNavidromeServerDialog = it })
+        CreateMediaProviderDialog(
+            setShowDialog = {
+                showNavidromeServerDialog = it
+                if (!it) editingServer = null
+            },
+            existingServer = editingServer
+        )
 }

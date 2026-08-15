@@ -54,6 +54,11 @@ internal fun discoveryRequestForMode(
             danceability = 0.30f,
             energyCurve = "fall"
         )
+        DiscoveryMixMode.CHILLOUT -> common.copy(
+            discovery = 0.44f,
+            variety = 0.74f,
+            energyCurve = "steady"
+        )
         DiscoveryMixMode.INSTRUMENTAL -> common.copy(
             mood = requestedMood,
             voice = "instrumental",
@@ -79,11 +84,54 @@ internal fun filterDiscoveryCandidatesForMode(
     mode: DiscoveryMixMode
 ): List<MediaItem> = when (mode) {
     DiscoveryMixMode.COOLDOWN -> songs.filter(MediaItem::isCredibleCooldownTrack)
+    DiscoveryMixMode.CHILLOUT -> songs.filter(MediaItem::isCredibleChilloutTrack)
     DiscoveryMixMode.INSTRUMENTAL -> songs.filter(MediaItem::isCredibleInstrumentalTrack)
     DiscoveryMixMode.HARMONIC -> songs.filter(MediaItem::hasCredibleHarmonicMetadata)
     DiscoveryMixMode.HIDDEN_GEMS -> songs.filter(MediaItem::isCredibleHiddenGem)
     DiscoveryMixMode.REDISCOVER -> songs.filter(MediaItem::isCredibleRediscovery)
     else -> songs
+}
+
+internal fun discoveryServerCandidateCount(mode: DiscoveryMixMode, outputLimit: Int): Int =
+    if (mode == DiscoveryMixMode.CHILLOUT) {
+        maxOf(outputLimit, 200)
+    } else {
+        outputLimit
+    }
+
+private fun MediaItem.isCredibleChilloutTrack(): Boolean {
+    val extras = mediaMetadata.extras ?: return false
+    if (!extras.containsKey(DiscoveryMetadataKeys.ENERGY) ||
+        !extras.containsKey(DiscoveryMetadataKeys.DANCEABILITY)
+    ) return false
+
+    return isCredibleChilloutAnalysis(
+        energy = extras.getFloat(DiscoveryMetadataKeys.ENERGY),
+        danceability = extras.getFloat(DiscoveryMetadataKeys.DANCEABILITY),
+        bpmConfidence = extras.getFloat(DiscoveryMetadataKeys.BPM_CONFIDENCE),
+        aggressive = extras.getFloat(DiscoveryMetadataKeys.MOOD_AGGRESSIVE),
+		loudnessRange = extras.getFloat(DiscoveryMetadataKeys.LOUDNESS_RANGE),
+		harmonicTurbulence = extras.getFloat(DiscoveryMetadataKeys.HARMONIC_TURBULENCE)
+    )
+}
+
+internal fun isCredibleChilloutAnalysis(
+    energy: Float,
+    danceability: Float,
+    bpmConfidence: Float,
+    aggressive: Float,
+	loudnessRange: Float,
+	harmonicTurbulence: Float = 0f
+): Boolean {
+    val pulseInsistence = (danceability * bpmConfidence).coerceIn(0f, 1f)
+    val dynamicSpace = (loudnessRange / 15f).coerceIn(0f, 1f)
+    val smoothness = (1f - energy) * 0.32f +
+        (1f - aggressive) * 0.28f +
+        (1f - pulseInsistence) * 0.26f +
+        dynamicSpace * 0.14f
+    val hardPulse = danceability > 0.82f && bpmConfidence > 0.72f
+	return energy <= 0.72f && aggressive <= 0.60f && harmonicTurbulence <= 0.40f &&
+		!hardPulse && smoothness >= 0.58f
 }
 
 private fun MediaItem.isCredibleHiddenGem(): Boolean {

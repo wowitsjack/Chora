@@ -66,6 +66,13 @@ fun NowPlayingLandscape(
     iconColor: Color = Color.Black,
     metadata: MediaMetadata? = null,
     onOpenStemMixer: () -> Unit = {},
+	isFavorite: Boolean = false,
+	downloadQueued: Boolean = false,
+	actionsEnabled: Boolean = false,
+	downloadEnabled: Boolean = false,
+	onDownload: () -> Unit = {},
+	onToggleFavorite: () -> Unit = {},
+	onHide: () -> Unit = {},
     overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit = { _, _ -> }
 ){
     val foldableState = rememberFoldableState()
@@ -83,9 +90,17 @@ fun NowPlayingLandscape(
     val stripTrackNumbers by settingsManager.stripTrackNumbersFromTitlesFlow.collectAsStateWithLifecycle(false)
 
     if (isTableTop) {
-        NowPlayingTableTop(mediaController, iconTextColor, metadata, stripTrackNumbers, onOpenStemMixer, overflowMenu)
+		NowPlayingTableTop(
+			mediaController, iconTextColor, metadata, stripTrackNumbers, onOpenStemMixer,
+			isFavorite, downloadQueued, actionsEnabled, downloadEnabled,
+			onDownload, onToggleFavorite, onHide, overflowMenu
+		)
     } else {
-        NowPlayingLandscapeContent(mediaController, iconTextColor, metadata, isCompactHeight, stripTrackNumbers, onOpenStemMixer, overflowMenu)
+		NowPlayingLandscapeContent(
+			mediaController, iconTextColor, metadata, isCompactHeight, stripTrackNumbers, onOpenStemMixer,
+			isFavorite, downloadQueued, actionsEnabled, downloadEnabled,
+			onDownload, onToggleFavorite, onHide, overflowMenu
+		)
     }
 }
 
@@ -96,6 +111,13 @@ private fun NowPlayingTableTop(
     metadata: MediaMetadata?,
     stripTrackNumbers: Boolean,
     onOpenStemMixer: () -> Unit,
+	isFavorite: Boolean,
+	downloadQueued: Boolean,
+	actionsEnabled: Boolean,
+	downloadEnabled: Boolean,
+	onDownload: () -> Unit,
+	onToggleFavorite: () -> Unit,
+	onHide: () -> Unit,
     overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit
 ) {
     val lyrics by LyricsState.lyrics.collectAsStateWithLifecycle()
@@ -169,6 +191,20 @@ private fun NowPlayingTableTop(
                     }
                 }
 
+				if (!isAudiobook) {
+					NowPlayingLibraryActions(
+						color = iconTextColor,
+						isFavorite = isFavorite,
+						downloadQueued = downloadQueued,
+						actionsEnabled = actionsEnabled,
+						downloadEnabled = downloadEnabled,
+						onDownload = onDownload,
+						onToggleFavorite = onToggleFavorite,
+						onHide = onHide,
+						modifier = Modifier.padding(vertical = 4.dp)
+					)
+				}
+
                 Row(
                     modifier = Modifier
                         .wrapContentHeight()
@@ -182,14 +218,6 @@ private fun NowPlayingTableTop(
                         AudiobookSecondaryControls(mediaController, iconTextColor, metadata, 48.dp)
                     } else {
                         LyricsButton(iconTextColor, 48.dp)
-                        FavoriteButton(
-                            iconTextColor,
-                            48.dp,
-                            metadata,
-                            metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
-                                metadata?.extras?.getString("navidromeID") != null
-                        )
-                        DownloadButton(iconTextColor, 48.dp, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
                         StemMixerButton(iconTextColor, 48.dp, metadata, onOpenStemMixer)
                         PlayQueueButton(iconTextColor, 48.dp)
                         overflowMenu(iconTextColor, 48.dp)
@@ -208,12 +236,19 @@ private fun NowPlayingLandscapeContent(
     isCompactHeight: Boolean,
     stripTrackNumbers: Boolean,
     onOpenStemMixer: () -> Unit,
+	isFavorite: Boolean,
+	downloadQueued: Boolean,
+	actionsEnabled: Boolean,
+	downloadEnabled: Boolean,
+	onDownload: () -> Unit,
+	onToggleFavorite: () -> Unit,
+	onHide: () -> Unit,
     overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit
 ) {
     // Button sizing for landscape
-    val mainButtonSize = 92.dp
+    val mainButtonSize = if (isCompactHeight) 64.dp else 84.dp
     val secondaryButtonSize = 48.dp
-    val smallButtonSize = 32.dp
+    val smallButtonSize = if (isCompactHeight) 28.dp else 32.dp
     val isAudiobook = metadata?.extras?.getString("mediaCategory") == MediaCategory.AUDIOBOOK
 
     Row {
@@ -294,7 +329,7 @@ private fun NowPlayingLandscapeContent(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(if (isCompactHeight) 4.dp else 12.dp))
 
             if (metadata?.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
                 Spacer(Modifier.height(48.dp))
@@ -303,15 +338,15 @@ private fun NowPlayingLandscapeContent(
                 PlaybackProgressSlider(iconTextColor, mediaController, metadata)
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(if (isCompactHeight) 2.dp else 6.dp))
             VolumeSlider(iconTextColor, mediaController)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(if (isCompactHeight) 2.dp else 6.dp))
 
             Row(
                 modifier = Modifier
                     .wrapContentHeight()
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = if (isCompactHeight) 8.dp else 24.dp)
                     .selectableGroup(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -358,12 +393,30 @@ private fun NowPlayingLandscapeContent(
                     }
                 }
             }
+
+			if (!isAudiobook) {
+				NowPlayingLibraryActions(
+					color = iconTextColor,
+					isFavorite = isFavorite,
+					downloadQueued = downloadQueued,
+					actionsEnabled = actionsEnabled,
+					downloadEnabled = downloadEnabled,
+					onDownload = onDownload,
+					onToggleFavorite = onToggleFavorite,
+					onHide = onHide,
+					modifier = Modifier.padding(top = if (isCompactHeight) 0.dp else 4.dp)
+				)
+			}
+
             // Extra buttons row - always visible
             Row(
                 modifier = Modifier
                     .wrapContentHeight()
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(
+                        horizontal = if (isCompactHeight) 4.dp else 12.dp,
+                        vertical = if (isCompactHeight) 0.dp else 4.dp
+                    )
                     .selectableGroup(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
@@ -372,14 +425,6 @@ private fun NowPlayingLandscapeContent(
                     AudiobookSecondaryControls(mediaController, iconTextColor, metadata, secondaryButtonSize)
                 } else {
                     LyricsButton(iconTextColor, secondaryButtonSize)
-                    FavoriteButton(
-                        iconTextColor,
-                        secondaryButtonSize,
-                        metadata,
-                        metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
-                            metadata?.extras?.getString("navidromeID") != null
-                    )
-                    DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
                     StemMixerButton(iconTextColor, secondaryButtonSize, metadata, onOpenStemMixer)
                     PlayQueueButton(iconTextColor, secondaryButtonSize)
                     overflowMenu(iconTextColor, secondaryButtonSize)
@@ -407,6 +452,11 @@ private fun NowPlayingLandscapeContent(
                             mediaController,
                             PaddingValues(horizontal = 32.dp, vertical = 16.dp)
                         )
+                        LyricsCloseButton(
+                            color = iconTextColor,
+                            onClick = { lyricsOpen = false },
+                            modifier = Modifier.align(Alignment.TopEnd)
+                        )
                     }
                 }
                 else {
@@ -424,7 +474,8 @@ private fun NowPlayingLandscapeContent(
             }
         }
         else {
-            if (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
+            if (lyricsOpen &&
+                metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
                 lyrics.isNotEmpty()
             ) {
                 Box(Modifier.weight(0.75f).fillMaxHeight()){
@@ -433,6 +484,13 @@ private fun NowPlayingLandscapeContent(
                         true,
                         mediaController,
                         PaddingValues(horizontal = 32.dp, vertical = 16.dp)
+                    )
+                    LyricsCloseButton(
+                        color = iconTextColor,
+                        onClick = { lyricsOpen = false },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 8.dp, end = 8.dp)
                     )
                 }
             }

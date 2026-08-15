@@ -50,6 +50,7 @@ import com.craftworks.music.data.model.MediaData
 import com.craftworks.music.data.model.isFavorite
 import com.craftworks.music.player.SongHelper
 import com.craftworks.music.player.AudiobookPlaybackHelper
+import com.craftworks.music.ui.elements.mixBuild3DEffect
 import com.craftworks.music.ui.playing.StemMixerDialog
 import com.craftworks.music.ui.playing.stemMixerSongId
 import com.craftworks.music.ui.viewmodels.AlbumScreenViewModel
@@ -195,6 +196,7 @@ fun IpodTouchApp(
                 .fillMaxWidth()
                 .fillMaxHeight()
                 .widthIn(max = 600.dp)
+                .mixBuild3DEffect(discoveryMixBuilding != null)
             ) {
                 if (nowPlayingOpen) {
                     val currentSong = playbackState.currentItem

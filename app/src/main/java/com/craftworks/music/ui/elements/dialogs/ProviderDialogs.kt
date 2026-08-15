@@ -55,6 +55,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.navigation.NavHostController
 import com.craftworks.music.R
 import com.craftworks.music.data.NavidromeProvider
+import com.craftworks.music.data.normalizeNavidromeFallbackUrls
+import com.craftworks.music.data.normalizeNavidromeServerUrl
 import com.craftworks.music.data.model.Screen
 import com.craftworks.music.managers.LocalProviderManager
 import com.craftworks.music.managers.NavidromeManager
@@ -172,13 +174,20 @@ fun EditLrcLibUrlDialog(
 @Composable
 fun CreateMediaProviderDialog(
     setShowDialog: (Boolean) -> Unit,
+    existingServer: NavidromeProvider? = null,
     context: Context = LocalContext.current
 ) {
-    var url: String by remember { mutableStateOf("") }
-    var username: String by remember { mutableStateOf("") }
-    var password: String by remember { mutableStateOf("") }
-    var allowCerts: Boolean by remember { mutableStateOf(false) }
+    var url: String by remember(existingServer?.id) { mutableStateOf(existingServer?.url.orEmpty()) }
+    var fallbackUrls: String by remember(existingServer?.id) {
+        mutableStateOf(existingServer?.fallbackUrls?.joinToString("\n").orEmpty())
+    }
+    var username: String by remember(existingServer?.id) { mutableStateOf(existingServer?.username.orEmpty()) }
+    var password: String by remember(existingServer?.id) { mutableStateOf(existingServer?.password.orEmpty()) }
+    var allowCerts: Boolean by remember(existingServer?.id) {
+        mutableStateOf(existingServer?.allowSelfSignedCert == true)
+    }
     var isUrlValid by remember { mutableStateOf(true) }
+    var areFallbackUrlsValid by remember { mutableStateOf(true) }
 
     var dir: String by remember { mutableStateOf("/Music/") }
 
@@ -296,7 +305,8 @@ fun CreateMediaProviderDialog(
                         onValueChange = {
                             if (it.length <= 512) {
                                 url = it
-                                isUrlValid = Patterns.WEB_URL.matcher(url).matches()
+                                isUrlValid = normalizeNavidromeServerUrl(url) != null
+                                navidromeStatus.value = ""
                             }
                         },
                         label = { Text(stringResource(R.string.Label_Navidrome_URL)) },
@@ -304,10 +314,30 @@ fun CreateMediaProviderDialog(
                         singleLine = true,
                         isError = navidromeStatus.value == "Invalid URL" || !isUrlValid
                     )
+                    OutlinedTextField(
+                        value = fallbackUrls,
+                        onValueChange = {
+                            if (it.length <= 2048) {
+                                fallbackUrls = it
+                                areFallbackUrlsValid = normalizeNavidromeFallbackUrls(it, url) != null
+                                navidromeStatus.value = ""
+                            }
+                        },
+                        label = { Text("Backup server URLs") },
+                        supportingText = { Text("One per line, tried in order if the main address is unavailable") },
+                        minLines = 2,
+                        maxLines = 4,
+                        isError = !areFallbackUrlsValid
+                    )
                     /* USERNAME */
                     OutlinedTextField(
                         value = username,
-                        onValueChange = { if (it.length <= 256) username = it },
+                        onValueChange = {
+                            if (it.length <= 256) {
+                                username = it
+                                navidromeStatus.value = ""
+                            }
+                        },
                         label = { Text(stringResource(R.string.Label_Navidrome_Username)) },
                         singleLine = true,
                         isError = navidromeStatus.value == "Wrong username or password"
@@ -316,7 +346,12 @@ fun CreateMediaProviderDialog(
                     var passwordVisible by remember { mutableStateOf(false) }
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { if (it.length <= 256) password = it },
+                        onValueChange = {
+                            if (it.length <= 256) {
+                                password = it
+                                navidromeStatus.value = ""
+                            }
+                        },
                         label = { Text(stringResource(R.string.Label_Navidrome_Password)) },
                         singleLine = true,
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -391,13 +426,24 @@ fun CreateMediaProviderDialog(
                     ) {
                         OutlinedButton(
                             onClick = {
+                                val normalizedUrl = normalizeNavidromeServerUrl(url) ?: return@OutlinedButton
+                                val normalizedFallbacks = normalizeNavidromeFallbackUrls(fallbackUrls, normalizedUrl)
+                                    ?: return@OutlinedButton
                                 val server = NavidromeProvider(
-                                    url,
-                                    url,
-                                    username,
-                                    password,
-                                    true,
-                                    allowCerts
+                                    id = existingServer?.id ?: normalizedUrl,
+                                    url = normalizedUrl,
+                                    username = username,
+                                    password = password,
+                                    enabled = existingServer?.enabled ?: true,
+                                    allowSelfSignedCert = allowCerts,
+                                    libraryIds = existingServer?.libraryIds.orEmpty().ifEmpty {
+                                        NavidromeProvider(
+                                            url = normalizedUrl,
+                                            username = username,
+                                            password = password
+                                        ).libraryIds
+                                    },
+                                    fallbackUrls = normalizedFallbacks
                                 )
                                 coroutineScope.launch {
                                     try {
@@ -413,7 +459,8 @@ fun CreateMediaProviderDialog(
                                 .weight(1f)
                                 .fillMaxWidth()
                                 .bounceClick(),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = isUrlValid && areFallbackUrlsValid && username.isNotBlank() && password.isNotBlank()
                         ) {
                             Text(
                                 stringResource(R.string.Action_Login),
@@ -422,16 +469,31 @@ fun CreateMediaProviderDialog(
                         }
                         Button(
                             onClick = {
+                                val normalizedUrl = normalizeNavidromeServerUrl(url) ?: return@Button
+                                val normalizedFallbacks = normalizeNavidromeFallbackUrls(fallbackUrls, normalizedUrl)
+                                    ?: return@Button
                                 val server = NavidromeProvider(
-                                    url,
-                                    url,
-                                    username,
-                                    password,
-                                    true,
-                                    allowCerts
+                                    id = existingServer?.id ?: normalizedUrl,
+                                    url = normalizedUrl,
+                                    username = username,
+                                    password = password,
+                                    enabled = existingServer?.enabled ?: true,
+                                    allowSelfSignedCert = allowCerts,
+                                    libraryIds = existingServer?.libraryIds.orEmpty().ifEmpty {
+                                        NavidromeProvider(
+                                            url = normalizedUrl,
+                                            username = username,
+                                            password = password
+                                        ).libraryIds
+                                    },
+                                    fallbackUrls = normalizedFallbacks
                                 )
                                 coroutineScope.launch {
-                                    NavidromeManager.addServer(server)
+                                    if (existingServer == null) {
+                                        NavidromeManager.addServer(server)
+                                    } else {
+                                        NavidromeManager.updateServer(server)
+                                    }
                                     AppearanceSettingsManager(context).setUsername(username)
                                 }
 
@@ -448,7 +510,7 @@ fun CreateMediaProviderDialog(
                             enabled = navidromeStatus.value == "ok"
                         ) {
                             Text(
-                                stringResource(R.string.Action_Add),
+                                if (existingServer == null) stringResource(R.string.Action_Add) else "Save",
                                 modifier = Modifier.height(24.dp)
                             )
                         }

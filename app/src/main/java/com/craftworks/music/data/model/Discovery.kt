@@ -30,6 +30,11 @@ enum class DiscoveryMixMode(
         title = "Wind Down",
         description = "Easy does it"
     ),
+    CHILLOUT(
+        apiValue = "chillout",
+        title = "Chillout",
+        description = "Low-key tracks with a little movement"
+    ),
     INSTRUMENTAL(
         apiValue = "instrumental",
         title = "Instrumental Focus",
@@ -78,12 +83,15 @@ object DiscoveryMetadataKeys {
     const val SIMILARITY = "discoverySimilarity"
     const val REASON = "discoveryReason"
     const val BPM = "discoveryBpm"
+    const val BPM_CONFIDENCE = "discoveryBpmConfidence"
     const val KEY = "discoveryKey"
     const val CAMELOT = "discoveryCamelot"
+	const val HARMONIC_TURBULENCE = "discoveryHarmonicTurbulence"
     const val ENERGY = "discoveryEnergy"
     const val AROUSAL = "discoveryArousal"
     const val VALENCE = "discoveryValence"
     const val DANCEABILITY = "discoveryDanceability"
+    const val LOUDNESS_RANGE = "discoveryLoudnessRange"
     const val MOOD = "discoveryMood"
     const val MOOD_AGGRESSIVE = "discoveryMoodAggressive"
     const val MOOD_RELAXED = "discoveryMoodRelaxed"

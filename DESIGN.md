@@ -47,7 +47,7 @@
 - Typography: bundled Helvetica Neue; 22sp Bold navigation titles, 18sp Bold list/song titles, 14sp Regular subtitles, 13sp Bold Now Playing metadata, 14sp Bold playback times, and 11sp Bold tab labels. Song-title tracking is slightly tightened rather than widened. Avoid Material typography roles inside replica components.
 - Spacing/layout rhythm: model the 320 x 480 point first-generation reference directly in density-independent units. Status insets are additive; compact rows are 44dp and two-line song rows are 52dp; nav bar is 44dp; tab bar is 49dp; mini playback strip is 54dp; primary horizontal inset is 12dp; separator inset is 12dp unless imagery establishes a 54dp text column.
 - Shape/radius/elevation: square list and bar edges; 5dp button radii only for classic beveled buttons; 4dp artwork rounding at most; 1px/dp separators; shadow and highlight are baked into gradients rather than Material elevation.
-- Motion: short 180-250ms horizontal drill-in/drill-out transitions; immediate tab replacement; modest pressed-state darkening; no spring physics, oversized scale, shared-axis Material transitions, or ambient animation.
+- Motion: short 180-250ms horizontal drill-in/drill-out transitions; immediate tab replacement; modest pressed-state darkening; no ambient animation. Building a generated mix is the deliberate exception: while generation is active, the complete visible app surface performs an exaggerated perspective tumble with depth scaling and wobble, then snaps back into place when the result arrives.
 - Imagery/iconography: square cover art with crop (`ContentScale.Crop`); compact monochrome tab/control glyphs drawn from Compose or project vectors; generated fallback art remains deterministic per album. Decorative Apple logos and product marks are excluded.
 
 ## Components
@@ -61,7 +61,7 @@
 - Keyboard/focus behavior: tab items, list rows, navigation buttons, and playback controls expose ordered focus targets and activate through Compose click semantics; Android back unwinds detail/Now Playing before leaving the app.
 - Contrast/readability: primary text at least 4.5:1; secondary text at least 3:1 for large labels and 4.5:1 otherwise; controls remain distinguishable without color alone.
 - Screen-reader semantics: artwork names the associated album; controls expose action and current state; selected tab uses selected semantics; time sliders expose current and total duration; decorative gradients/dividers are silent.
-- Reduced motion and sensory considerations: transitions remain brief and nonessential; no continuous motion, flashing, or blur-dependent legibility.
+- Sensory considerations: ordinary navigation remains brief and nonessential. The user explicitly opts into the intentionally intense generated-mix tumble by pressing Build; it never flashes, obscures a completed result, or continues after generation ends.
 
 ## Responsive behavior
 - Supported breakpoints/devices: Android phones from 320dp compact portrait through large portrait and landscape; the 320 x 480 point portrait canvas is the fidelity baseline.

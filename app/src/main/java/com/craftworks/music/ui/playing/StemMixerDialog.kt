@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -62,8 +63,10 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.session.MediaController
 import com.craftworks.music.R
 import com.craftworks.music.data.model.MediaCategory
@@ -74,14 +77,24 @@ import kotlinx.coroutines.isActive
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private const val STEM_DRIFT_LIMIT_MS = 120L
-private const val STEM_DRIFT_CHECK_INTERVAL_MS = 1_000L
+private const val STEM_DRIFT_SETTLED_MS = 35L
+private const val STEM_DRIFT_SEEK_LIMIT_MS = 750L
+private const val STEM_DRIFT_CHECK_INTERVAL_MS = 250L
+private const val STEM_CATCH_UP_SPEED = 1.04f
+private const val STEM_SLOW_DOWN_SPEED = 0.96f
 private val stemDisplayNames = mapOf(
     "vocals" to "Vocals",
     "drums" to "Drums",
     "bass" to "Bass",
     "other" to "Other",
     "instrumental" to "Instrumental"
+)
+
+private data class LocalStemLoadState(
+    val urls: Map<String, String> = emptyMap(),
+    val completed: Int = 0,
+    val total: Int = 0,
+    val error: String? = null
 )
 
 internal fun stemMixerSongId(metadata: MediaMetadata?): String? {
@@ -91,8 +104,29 @@ internal fun stemMixerSongId(metadata: MediaMetadata?): String? {
         ?.takeIf { it.isNotBlank() && !it.startsWith("Local_") }
 }
 
-internal fun shouldCorrectStemDrift(leaderPositionMs: Long, stemPositionMs: Long): Boolean =
-    abs(leaderPositionMs - stemPositionMs) > STEM_DRIFT_LIMIT_MS
+internal enum class StemSyncAction {
+    NONE,
+    RESET_SPEED,
+    SPEED_UP,
+    SLOW_DOWN,
+    SEEK
+}
+
+internal fun stemSyncAction(
+    leaderPositionMs: Long,
+    stemPositionMs: Long,
+    stemSpeed: Float
+): StemSyncAction {
+    val driftMs = leaderPositionMs - stemPositionMs
+    return when {
+        abs(driftMs) > STEM_DRIFT_SEEK_LIMIT_MS -> StemSyncAction.SEEK
+        abs(driftMs) <= STEM_DRIFT_SETTLED_MS -> {
+            if (stemSpeed == 1f) StemSyncAction.NONE else StemSyncAction.RESET_SPEED
+        }
+        driftMs > 0L -> StemSyncAction.SPEED_UP
+        else -> StemSyncAction.SLOW_DOWN
+    }
+}
 
 private fun MediaItem.matchesStemSong(songId: String): Boolean =
     stemMixerSongId(mediaMetadata) == songId
@@ -109,8 +143,8 @@ fun StemMixerButton(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.height(size + 6.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(6.dp),
+        modifier = Modifier.size(size),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             disabledContainerColor = Color.Transparent,
@@ -121,7 +155,7 @@ fun StemMixerButton(
         Icon(
             imageVector = ImageVector.vectorResource(R.drawable.rounded_tune_24),
             contentDescription = "Open stem mixer",
-            modifier = Modifier.size(size)
+            modifier = Modifier.size(size * 0.58f)
         )
     }
 }
@@ -136,8 +170,9 @@ fun StemMixerDialog(
     val songId = stemMixerSongId(song.mediaMetadata)
     val viewModel: StemMixerViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var selectedProfile by remember(songId) { mutableStateOf("4stems") }
-    var selectedBitrate by remember(songId) { mutableStateOf(256) }
+    val restoredSelection = remember(songId) { viewModel.selectionFor(songId.orEmpty()) }
+    var selectedProfile by remember(songId) { mutableStateOf(restoredSelection.profile) }
+    var selectedBitrate by remember(songId) { mutableStateOf(restoredSelection.bitrate) }
 
     LaunchedEffect(songId) {
         viewModel.check(songId.orEmpty(), selectedProfile, selectedBitrate)
@@ -458,17 +493,55 @@ private fun StemMixerReadyContent(
     val context = LocalContext.current
     val songId = state.songId
     val stemNames = state.stemUrls.keys.toList()
+    val localStemLoad by produceState(
+        initialValue = LocalStemLoadState(total = state.stemUrls.size),
+        key1 = songId,
+        key2 = state.stemUrls
+    ) {
+        val cachedUrls = linkedMapOf<String, String>()
+        try {
+            state.stemUrls.entries.forEachIndexed { index, (stem, sourceUrl) ->
+                cachedUrls[stem] = cacheStemFile(context, songId, stem, sourceUrl).toString()
+                value = LocalStemLoadState(
+                    completed = index + 1,
+                    total = state.stemUrls.size
+                )
+            }
+            value = LocalStemLoadState(
+                urls = cachedUrls,
+                completed = state.stemUrls.size,
+                total = state.stemUrls.size
+            )
+        } catch (error: Exception) {
+            value = LocalStemLoadState(
+                completed = cachedUrls.size,
+                total = state.stemUrls.size,
+                error = error.message ?: "Could not download the stems"
+            )
+        }
+    }
+
+    if (localStemLoad.urls.isEmpty()) {
+        StemMixerLocalDownloadContent(
+            state = localStemLoad,
+            foreground = foreground,
+            accent = accent
+        )
+        return
+    }
+    val localStemUrls = localStemLoad.urls
     val audioAttributes = remember {
         AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .setUsage(C.USAGE_MEDIA)
             .build()
     }
-    val players = remember(songId, state.stemUrls) {
+    val players = remember(songId, localStemUrls) {
         stemNames.associateWith { stem ->
             ExoPlayer.Builder(context).build().apply {
                 setAudioAttributes(audioAttributes, false)
-                setMediaItem(MediaItem.fromUri(state.stemUrls.getValue(stem)))
+                setSeekParameters(SeekParameters.EXACT)
+                setMediaItem(MediaItem.fromUri(localStemUrls.getValue(stem)))
                 prepare()
             }
         }
@@ -538,10 +611,27 @@ private fun StemMixerReadyContent(
             mixerPlaying = players.values.any { it.isPlaying }
 
             val now = SystemClock.elapsedRealtime()
-            if (now - lastDriftCheckAtMs >= STEM_DRIFT_CHECK_INTERVAL_MS) {
+            if (mixerPlaying && now - lastDriftCheckAtMs >= STEM_DRIFT_CHECK_INTERVAL_MS) {
                 players.values
-                    .filter { it !== leader && shouldCorrectStemDrift(positionMs, it.currentPosition) }
-                    .forEach { it.seekTo(positionMs) }
+                    .filter { it !== leader }
+                    .forEach { stemPlayer ->
+                        when (stemSyncAction(
+                            leaderPositionMs = positionMs,
+                            stemPositionMs = stemPlayer.currentPosition,
+                            stemSpeed = stemPlayer.playbackParameters.speed
+                        )) {
+                            StemSyncAction.NONE -> Unit
+                            StemSyncAction.RESET_SPEED -> stemPlayer.playbackParameters = PlaybackParameters.DEFAULT
+                            StemSyncAction.SPEED_UP -> stemPlayer.playbackParameters = PlaybackParameters(STEM_CATCH_UP_SPEED)
+                            StemSyncAction.SLOW_DOWN -> stemPlayer.playbackParameters = PlaybackParameters(STEM_SLOW_DOWN_SPEED)
+                            StemSyncAction.SEEK -> {
+                                stemPlayer.pause()
+                                stemPlayer.playbackParameters = PlaybackParameters.DEFAULT
+                                stemPlayer.seekTo(positionMs)
+                                stemPlayer.play()
+                            }
+                        }
+                    }
                 lastDriftCheckAtMs = now
             }
             delay(100L)
@@ -631,8 +721,19 @@ private fun StemMixerReadyContent(
             IconButton(
                 enabled = handoffComplete,
                 onClick = {
-                    if (mixerPlaying) players.values.forEach(Player::pause)
-                    else players.values.forEach(Player::play)
+                    if (mixerPlaying) {
+                        players.values.forEach {
+                            it.pause()
+                            it.playbackParameters = PlaybackParameters.DEFAULT
+                        }
+                    } else {
+                        val resumePosition = leader.currentPosition.coerceAtLeast(0L)
+                        players.values.forEach {
+                            it.playbackParameters = PlaybackParameters.DEFAULT
+                            it.seekTo(resumePosition)
+                        }
+                        players.values.forEach(Player::play)
+                    }
                     mixerPlaying = !mixerPlaying
                 },
                 modifier = Modifier.size(72.dp)
@@ -648,6 +749,49 @@ private fun StemMixerReadyContent(
                     modifier = Modifier.size(54.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun StemMixerLocalDownloadContent(
+    state: LocalStemLoadState,
+    foreground: Color,
+    accent: Color
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp)
+    ) {
+        Text(
+            text = if (state.error == null) "Downloading stems" else "Stem download failed",
+            color = foreground,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(12.dp))
+        if (state.error == null) {
+            LinearProgressIndicator(
+                progress = { state.completed.toFloat() / state.total.coerceAtLeast(1).toFloat() },
+                color = accent,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 520.dp)
+            )
+            Text(
+                text = "Saving MP3 channels locally ${state.completed}/${state.total}",
+                color = foreground.copy(alpha = 0.72f),
+                modifier = Modifier.padding(top = 10.dp)
+            )
+        } else {
+            Text(
+                text = state.error,
+                color = foreground.copy(alpha = 0.72f),
+                textAlign = TextAlign.Center
+            )
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.craftworks.music.ui.ipod
 
-import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -116,26 +115,19 @@ internal fun calculateIpodNowPlayingMediaGeometry(
 internal fun rememberIpodPlaybackState(controller: MediaController?): IpodPlaybackState {
     val logicalQueue by SongHelper.currentTracklistFlow.collectAsStateWithLifecycle()
     var state by remember(controller) { mutableStateOf(controller.toIpodPlaybackState()) }
-    var lastPositionSampleAt by remember(controller) {
-        mutableStateOf(SystemClock.elapsedRealtime())
-    }
-
     DisposableEffect(controller) {
         if (controller == null) return@DisposableEffect onDispose { }
         val listener = object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
                 val reported = controller.toIpodPlaybackState()
-                val now = SystemClock.elapsedRealtime()
                 state = reported.copy(
                     positionMs = stablePlaybackPosition(
                         previousPositionMs = state.positionMs,
                         reportedPositionMs = reported.positionMs,
-                        elapsedMs = now - lastPositionSampleAt,
                         isPlaying = reported.isPlaying,
                         durationMs = reported.durationMs
                     )
                 )
-                lastPositionSampleAt = now
             }
 
             override fun onPositionDiscontinuity(
@@ -151,13 +143,11 @@ internal fun rememberIpodPlaybackState(controller: MediaController?): IpodPlayba
                     state = controller.toIpodPlaybackState().copy(
                         positionMs = newPosition.positionMs.coerceAtLeast(0L)
                     )
-                    lastPositionSampleAt = SystemClock.elapsedRealtime()
                 }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 state = controller.toIpodPlaybackState()
-                lastPositionSampleAt = SystemClock.elapsedRealtime()
             }
         }
         controller.addListener(listener)
@@ -169,17 +159,14 @@ internal fun rememberIpodPlaybackState(controller: MediaController?): IpodPlayba
         if (controller == null) return@LaunchedEffect
         do {
             val reported = controller.toIpodPlaybackState()
-            val now = SystemClock.elapsedRealtime()
             state = reported.copy(
                 positionMs = stablePlaybackPosition(
                     previousPositionMs = state.positionMs,
                     reportedPositionMs = reported.positionMs,
-                    elapsedMs = now - lastPositionSampleAt,
                     isPlaying = reported.isPlaying,
                     durationMs = reported.durationMs
                 )
             )
-            lastPositionSampleAt = now
             if (state.isPlaying) delay(500L)
         } while (state.isPlaying)
     }

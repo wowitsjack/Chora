@@ -14,7 +14,8 @@ data class NavidromeProvider (
     val enabled:Boolean? = true,
     var allowSelfSignedCert: Boolean? = false,
     // List of library folders and if they're enabled or not.
-    var libraryIds: List<Pair<NavidromeLibrary, Boolean>> = listOf(Pair(NavidromeLibrary(0, "Media Library"), true))
+    var libraryIds: List<Pair<NavidromeLibrary, Boolean>> = listOf(Pair(NavidromeLibrary(0, "Media Library"), true)),
+    var fallbackUrls: List<String> = emptyList()
 )
 
 @Serializable
@@ -46,6 +47,21 @@ internal fun normalizeNavidromeServerUrl(input: String): String? {
     }
 
     return candidate.trimEnd('/')
+}
+
+internal fun navidromeConnectionUrls(server: NavidromeProvider): List<String> =
+    (listOf(server.url) + server.fallbackUrls)
+        .mapNotNull(::normalizeNavidromeServerUrl)
+        .distinct()
+
+internal fun normalizeNavidromeFallbackUrls(input: String, primaryUrl: String): List<String>? {
+    val candidates = input.lineSequence()
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .toList()
+    val normalized = candidates.map { normalizeNavidromeServerUrl(it) ?: return null }
+    val primary = normalizeNavidromeServerUrl(primaryUrl)
+    return normalized.distinct().filterNot { it == primary }
 }
 
 internal fun navidromeServerUrlConnectionProblem(serverUrl: String): String? {

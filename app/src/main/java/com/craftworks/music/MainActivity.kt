@@ -14,7 +14,6 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -55,7 +54,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -339,10 +337,15 @@ class MainActivity : ComponentActivity() {
                 ) { paddingValues ->
                     if (useBottomSheet) {
                         BottomSheetScaffold(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp)
+                                .padding(
+                                    bottom = paddingValues.calculateBottomPadding() - 1.dp
+                                ),
                             sheetContainerColor = Color.Transparent,
                             containerColor = Color.Transparent,
-                            sheetPeekHeight = peekHeight + 80.dp + WindowInsets.navigationBars.asPaddingValues()
-                                .calculateBottomPadding(),
+                            sheetPeekHeight = peekHeight,
                             //sheetShadowElevation = 6.dp,
                             sheetShape = RectangleShape,
                             sheetDragHandle = { },
@@ -453,7 +456,7 @@ class MainActivity : ComponentActivity() {
                             }) {
                             SetupNavGraph(
                                 navController,
-                                paddingValues.calculateBottomPadding() + peekHeight,
+                                peekHeight,
                                 mediaController,
                                 showOnboarding
                             )
@@ -571,21 +574,8 @@ fun AnimatedBottomNavBar(
     ).value
 
     if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT) {
-        val expanded by remember { derivedStateOf { scaffoldState.bottomSheetState.targetValue == SheetValue.Expanded } }
-
-        val yTrans by animateFloatAsState(
-            targetValue = if (expanded) -dpToPx(
-                80 + WindowInsets.navigationBars.asPaddingValues()
-                    .calculateBottomPadding().value.toInt()
-            ).toFloat()
-            else 0f, label = "Fullscreen Translation"
-        )
-
         NavigationBar(
             modifier = Modifier
-                .graphicsLayer {
-                    translationY = -yTrans
-                }
                 .padding(horizontal = 4.dp)
         ) {
             orderedNavItems.forEachIndexed { _, item ->

@@ -1,20 +1,24 @@
 package com.craftworks.music.ui.elements
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AppBarWithSearch
 import androidx.compose.material3.ExpandedFullScreenSearchBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.Text
@@ -23,10 +27,15 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.rememberSearchBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.craftworks.music.managers.settings.SearchHistoryManager
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,6 +50,9 @@ fun TopBarWithSearch(
     val textFieldState = rememberTextFieldState()
     val searchBarState = rememberSearchBarState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val searchHistory = remember(context) { SearchHistoryManager(context) }
+    val recentSearches by searchHistory.recentSearchesFlow.collectAsStateWithLifecycle(emptyList())
 
     LaunchedEffect(textFieldState.text) {
         val query = textFieldState.text.toString()
@@ -58,6 +70,7 @@ fun TopBarWithSearch(
                 textFieldState = textFieldState,
                 onSearch = {
                     onSearch(it)
+                    scope.launch { searchHistory.recordSearch(it) }
                 },
                 leadingIcon = {
                     IconButton(
@@ -115,6 +128,37 @@ fun TopBarWithSearch(
         inputField = inputField,
         collapsedShape = CircleShape,
     ) {
-        searchResults()
+        if (textFieldState.text.isBlank() && recentSearches.isNotEmpty()) {
+            LazyColumn {
+                item {
+                    ListItem(
+                        headlineContent = { Text("Recent searches") },
+                        trailingContent = {
+                            IconButton(onClick = { scope.launch { searchHistory.clear() } }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Clear recent searches")
+                            }
+                        }
+                    )
+                }
+                items(recentSearches.size) { index ->
+                    val recent = recentSearches[index]
+                    ListItem(
+                        headlineContent = { Text(recent) },
+                        leadingContent = {
+                            Icon(Icons.Rounded.Search, contentDescription = null)
+                        },
+                        modifier = Modifier.clickable {
+                            textFieldState.edit {
+                                replace(0, length, recent)
+                            }
+                            onSearch(recent)
+                            scope.launch { searchHistory.recordSearch(recent) }
+                        }
+                    )
+                }
+            }
+        } else {
+            searchResults()
+        }
     }
 }

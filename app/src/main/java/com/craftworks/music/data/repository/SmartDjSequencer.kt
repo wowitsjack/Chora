@@ -154,7 +154,8 @@ internal object SmartDjSequencer {
                 .thenByDescending { seedLaneRank(it, lane) }
                 .thenBy { it.index }
         ).first()
-        DiscoveryMixMode.COOLDOWN -> pool.sortedWith(
+        DiscoveryMixMode.COOLDOWN,
+        DiscoveryMixMode.CHILLOUT -> pool.sortedWith(
             compareByDescending<SongProfile> { it.resolvedEnergy() }
                 .thenByDescending { seedLaneRank(it, lane) }
                 .thenBy { it.index }
@@ -215,7 +216,8 @@ internal object SmartDjSequencer {
 
         when (mode) {
             DiscoveryMixMode.ENERGY_RISE,
-            DiscoveryMixMode.COOLDOWN -> {
+            DiscoveryMixMode.COOLDOWN,
+            DiscoveryMixMode.CHILLOUT -> {
                 val desired = desiredEnergy(mode, position, outputLimit)
                 score += (4f - abs(candidate.resolvedEnergy() - desired))
                     .coerceAtLeast(0f)
@@ -640,6 +642,7 @@ internal object SmartDjSequencer {
         return when (mode) {
             DiscoveryMixMode.ENERGY_RISE -> 0.4f + 3.4f * progress
             DiscoveryMixMode.COOLDOWN -> 2.2f - 2.0f * progress
+            DiscoveryMixMode.CHILLOUT -> 1.6f
             else -> 2f
         }
     }

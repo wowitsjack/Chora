@@ -15,19 +15,18 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
@@ -73,6 +72,13 @@ fun NowPlayingPortrait(
     iconColor: Color = Color.Black,
     metadata: MediaMetadata? = null,
     onOpenStemMixer: () -> Unit = {},
+    isFavorite: Boolean = false,
+    downloadQueued: Boolean = false,
+    actionsEnabled: Boolean = false,
+    downloadEnabled: Boolean = false,
+    onDownload: () -> Unit = {},
+    onToggleFavorite: () -> Unit = {},
+    onHide: () -> Unit = {},
     overflowMenu: @Composable (Color, androidx.compose.ui.unit.Dp) -> Unit = { _, _ -> }
 ) {
     val iconTextColor by animateColorAsState(
@@ -91,59 +97,74 @@ fun NowPlayingPortrait(
     // Responsive sizing based on screen size
     // On unfolded/large screens, keep elements constrained to fit the card
     val foldableState = rememberFoldableState()
-    val buttonScale = when (foldableState.layoutMode) {
-        LayoutMode.EXPANDED, LayoutMode.BOOK_MODE -> 1.0f  // Normal size on unfolded
-        LayoutMode.MEDIUM -> 1.1f
-        else -> 1f
-    }
+    val compactControls = foldableState.layoutMode == LayoutMode.COMPACT
     val maxArtHeight = when (foldableState.layoutMode) {
         LayoutMode.EXPANDED, LayoutMode.BOOK_MODE -> 360.dp  // Smaller on unfolded
         LayoutMode.MEDIUM -> 400.dp
         else -> 420.dp
     }
-    val buttonRowWidth = when (foldableState.layoutMode) {
-        LayoutMode.EXPANDED, LayoutMode.BOOK_MODE -> 340.dp  // Narrower on unfolded
-        LayoutMode.MEDIUM -> 360.dp
-        else -> 320.dp
-    }
-
-    Column (
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(vertical = 8.dp)
     ) {
+        val compactHeight = maxHeight < 760.dp
+        val denseControls = compactControls || compactHeight
+        val smallButtonSize = if (denseControls) 28.dp else 32.dp
+        val transportButtonSize = if (denseControls) 40.dp else 48.dp
+        val playButtonSize = if (denseControls) 68.dp else 84.dp
+        val secondaryButtonSize = 48.dp
+
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else 10.dp)
+        ) {
 
         /* Album Cover + Lyrics */
         AnimatedContent(
             lyricsOpen,
             label = "Crossfade between lyrics",
             modifier = Modifier
-                .heightIn(min = 256.dp, max = maxArtHeight)
+                .weight(1f)
                 .fillMaxWidth()
         ) { it ->
             if (it) {
-                LyricsView(
-                    iconTextColor,
-                    false,
-                    mediaController,
-                    PaddingValues(horizontal = 32.dp)
-                )
+                Box(Modifier.fillMaxSize()) {
+                    LyricsView(
+                        iconTextColor,
+                        false,
+                        mediaController,
+                        PaddingValues(horizontal = 32.dp)
+                    )
+                    LyricsCloseButton(
+                        color = iconTextColor,
+                        onClick = { lyricsOpen = false },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 8.dp, end = 24.dp)
+                    )
+                }
             } else {
-                NowPlayingArtwork(
-                    metadata = metadata,
-                    targetSize = 1024,
-                    crossfade = false,
+                BoxWithConstraints(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 32.dp)
-                        .aspectRatio(1f)
-                        .shadow(4.dp, RoundedCornerShape(24.dp))
-                        .clip(RoundedCornerShape(24.dp))
-                )
+                        .fillMaxSize()
+                        .padding(horizontal = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val artworkSize = minOf(maxWidth, maxHeight, maxArtHeight)
+                    NowPlayingArtwork(
+                        metadata = metadata,
+                        targetSize = 1024,
+                        crossfade = false,
+                        modifier = Modifier
+                            .size(artworkSize)
+                            .shadow(4.dp, RoundedCornerShape(24.dp))
+                            .clip(RoundedCornerShape(24.dp))
+                    )
+                }
             }
         }
 
@@ -248,8 +269,8 @@ fun NowPlayingPortrait(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .weight(1f),
+                    .height(playButtonSize)
+                    .padding(horizontal = if (denseControls) 8.dp else 24.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -258,52 +279,65 @@ fun NowPlayingPortrait(
                         AudiobookTransportControls(
                             controller = it,
                             color = iconTextColor,
-                            playButtonSize = (92 * buttonScale).dp,
-                            chapterButtonSize = (48 * buttonScale).dp,
-                            seekButtonSize = (38 * buttonScale).dp
+                            playButtonSize = playButtonSize,
+                            chapterButtonSize = transportButtonSize,
+                            seekButtonSize = smallButtonSize
                         )
                     } else {
                         ShuffleButton(
                             it,
                             iconTextColor,
-                            Modifier.size((32 * buttonScale).dp)
+                            Modifier.size(smallButtonSize)
                         )
 
                         PreviousSongButton(
                             it,
                             iconTextColor,
-                            Modifier.size((48 * buttonScale).dp)
+                            Modifier.size(transportButtonSize)
                         )
 
                         PlayPauseButton(
                             it,
                             iconTextColor,
-                            Modifier.size((92 * buttonScale).dp)
+                            Modifier.size(playButtonSize)
                         )
 
                         NextSongButton(
                             it,
                             iconTextColor,
-                            Modifier.size((48 * buttonScale).dp)
+                            Modifier.size(transportButtonSize)
                         )
 
                         RepeatButton(
                             it,
                             iconTextColor,
-                            Modifier.size((32 * buttonScale).dp)
+                            Modifier.size(smallButtonSize)
                         )
                     }
                 }
             }
 
+            if (!isAudiobook) {
+                NowPlayingLibraryActions(
+                    color = iconTextColor,
+                    isFavorite = isFavorite,
+                    downloadQueued = downloadQueued,
+                    actionsEnabled = actionsEnabled,
+                    downloadEnabled = downloadEnabled,
+                    onDownload = onDownload,
+                    onToggleFavorite = onToggleFavorite,
+                    onHide = onHide
+                )
+            }
+
             Row(
                 modifier = Modifier
-                    .width(buttonRowWidth)
-                    .weight(.75f),
+                    .fillMaxWidth()
+                    .height(secondaryButtonSize + 8.dp)
+                    .padding(horizontal = if (denseControls) 4.dp else 24.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                val secondaryButtonSize = (48 * buttonScale).dp
                 if (isAudiobook && mediaController != null) {
                     AudiobookSecondaryControls(
                         controller = mediaController,
@@ -314,16 +348,6 @@ fun NowPlayingPortrait(
                 } else {
                     LyricsButton(iconTextColor, secondaryButtonSize)
 
-                    FavoriteButton(
-                        iconTextColor,
-                        secondaryButtonSize,
-                        metadata,
-                        metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION &&
-                            metadata?.extras?.getString("navidromeID") != null
-                    )
-
-                    DownloadButton(iconTextColor, secondaryButtonSize, metadata, (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION && metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == false))
-
                     StemMixerButton(iconTextColor, secondaryButtonSize, metadata, onOpenStemMixer)
 
                     PlayQueueButton(iconTextColor, secondaryButtonSize)
@@ -333,5 +357,6 @@ fun NowPlayingPortrait(
             }
         }
         //endregion
+        }
     }
 }

@@ -5,6 +5,43 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class NavidromeProviderUrlTest {
+
+    @Test
+    fun `connection URLs preserve primary order and remove invalid duplicates`() {
+        val server = NavidromeProvider(
+            id = "server",
+            url = "musicbox.local:4533/",
+            username = "user",
+            password = "password",
+            fallbackUrls = listOf(
+                "http://musicbox.local:4533",
+                "https://music.example.test/",
+                "ftp://invalid.example.test"
+            )
+        )
+
+        assertEquals(
+            listOf("http://musicbox.local:4533", "https://music.example.test"),
+            navidromeConnectionUrls(server)
+        )
+    }
+
+    @Test
+    fun `fallback URL input normalizes lines and omits the primary`() {
+        assertEquals(
+            listOf("https://backup.example.test", "http://192.168.1.10:4533"),
+            normalizeNavidromeFallbackUrls(
+                input = "https://backup.example.test/\n192.168.1.10:4533\nhttps://primary.example.test",
+                primaryUrl = "https://primary.example.test/"
+            )
+        )
+        assertNull(
+            normalizeNavidromeFallbackUrls(
+                input = "ftp://invalid.example.test",
+                primaryUrl = "https://primary.example.test"
+            )
+        )
+    }
     @Test
     fun `normalizes reachable Navidrome base URLs`() {
         assertEquals(

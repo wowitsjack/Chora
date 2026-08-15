@@ -136,10 +136,9 @@ fun NavidromeProviderCard(
         "demo",
         enabled = true,
         allowSelfSignedCert = true
-    )
+    ),
+    onEdit: (NavidromeProvider) -> Unit = {}
 ) {
-    rememberCoroutineScope()
-
     Row(modifier = Modifier
         .padding(bottom = 12.dp)
         .clip(RoundedCornerShape(12.dp))
@@ -168,6 +167,13 @@ fun NavidromeProviderCard(
                 color = MaterialTheme.colorScheme.onBackground.copy(0.75f),
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (server.fallbackUrls.isNotEmpty()) {
+                Text(
+                    text = "${server.fallbackUrls.size} backup ${if (server.fallbackUrls.size == 1) "address" else "addresses"}",
+                    color = MaterialTheme.colorScheme.onBackground.copy(0.62f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
 
         var checked by remember { mutableStateOf(false) }
@@ -189,6 +195,21 @@ fun NavidromeProviderCard(
                 Log.d("NAVIDROME", "Navidrome Current Server: ${server.id}")
             }
         )
+
+        Button(
+            onClick = { onEdit(server) },
+            shape = CircleShape,
+            modifier = Modifier.size(48.dp),
+            contentPadding = PaddingValues(2.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Edit,
+                tint = MaterialTheme.colorScheme.onBackground,
+                contentDescription = "Edit Navidrome Server",
+                modifier = Modifier.size(28.dp)
+            )
+        }
 
         // Delete Button
         Button(

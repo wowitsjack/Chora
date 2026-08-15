@@ -9,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.craftworks.music.data.NavidromeLibrary
 import com.craftworks.music.data.NavidromeProvider
+import com.craftworks.music.data.navidromeConnectionUrls
 import com.craftworks.music.data.navidromeServerUrlConnectionProblem
 import com.craftworks.music.data.normalizeNavidromeServerUrl
 import com.craftworks.music.data.model.Lyric
@@ -193,141 +194,115 @@ class NavidromeDataSource @Inject constructor(
         val server = serverOverride
             ?: NavidromeManager.getCurrentServer()
             ?: throw IllegalArgumentException("No active Navidrome server")
-        val salt = generateSalt(8)
-        val token = md5Hash(server.password + salt)
-        val serverUrl = normalizeNavidromeServerUrl(server.url)
-        if (serverUrl == null) {
-            if (endpoint.startsWith("ping")) {
-                navidromeStatus.value = "Invalid URL"
-            }
-            Log.w("NAVIDROME", "Invalid URL for endpoint: $endpoint")
-            if (requireSuccess) {
-                throw IOException("${endpoint.substringBefore('?')} request failed (Invalid URL)")
-            }
-            return@withContext emptyList<Any>()
-        }
-
-        val connectionProblem = navidromeServerUrlConnectionProblem(serverUrl)
-        if (connectionProblem != null) {
-            if (endpoint.startsWith("ping")) {
-                navidromeStatus.value = connectionProblem
-            }
-            Log.w("NAVIDROME", "$connectionProblem for endpoint: $endpoint")
-            if (requireSuccess) {
-                throw IOException("${endpoint.substringBefore('?')} request failed ($connectionProblem)")
-            }
-            return@withContext emptyList<Any>()
-        }
-
-        // URL-encode username to prevent URL injection attacks
-        val encodedUsername = URLEncoder.encode(server.username, "UTF-8")
-        var url = "$serverUrl/rest/$endpoint&u=$encodedUsername&t=$token&s=$salt&v=1.16.1&c=Chora"
-
-        // Append musicFolderId parameters if provided
-        musicFolderIds?.forEach { folderId ->
-            url += "&musicFolderId=$folderId"
-        }
-
+        val serverUrls = navidromeConnectionUrls(server)
         NavidromeManager.setSyncingStatus(true)
-
         val activeClient = if (server.allowSelfSignedCert == true) insecureClient else client
-        val parsedData = mutableListOf<Any>()
+        var lastFailure = "Invalid URL"
+        var lastException: Exception? = null
 
         try {
-            val response: HttpResponse = activeClient.get(url) {
-                // Force network request if ignoreCachedResponse is true
-                if (ignoreCachedResponse) {
-                    headers {
-                        append("Cache-Control", "no-cache")
-                    }
+            serverUrls.forEachIndexed { index, serverUrl ->
+                navidromeServerUrlConnectionProblem(serverUrl)?.let { problem ->
+                    lastFailure = problem
+                    return@forEachIndexed
                 }
-            }
 
-            if (response.status != HttpStatusCode.OK) {
-                // Only log the endpoint, not the full URL which contains auth credentials
-                Log.w("NAVIDROME", "HTTP ${response.status} for endpoint: $endpoint")
-                if (endpoint.startsWith("ping")) {
-                    navidromeStatus.value = "HTTP ${response.status.value}"
+                val salt = generateSalt(8)
+                val token = md5Hash(server.password + salt)
+                val encodedUsername = URLEncoder.encode(server.username, "UTF-8")
+                var url = "$serverUrl/rest/$endpoint&u=$encodedUsername&t=$token&s=$salt&v=1.16.1&c=Chora"
+                musicFolderIds?.forEach { folderId ->
+                    url += "&musicFolderId=$folderId"
                 }
-                if (requireSuccess) {
-                    throw IOException(
-                        "${endpoint.substringBefore('?')} returned HTTP ${response.status.value}"
+
+                try {
+                    val response: HttpResponse = activeClient.get(url) {
+                        if (ignoreCachedResponse) {
+                            headers { append("Cache-Control", "no-cache") }
+                        }
+                    }
+                    if (response.status != HttpStatusCode.OK) {
+                        lastFailure = "HTTP ${response.status.value}"
+                        Log.w(
+                            "NAVIDROME",
+                            "HTTP ${response.status} for endpoint: $endpoint (path ${index + 1}/${serverUrls.size})"
+                        )
+                        return@forEachIndexed
+                    }
+                    val parsed = parseGetResponse(
+                        endpoint = endpoint,
+                        responseContent = response.bodyAsText(),
+                        serverUrl = serverUrl,
+                        server = server
+                    )
+                    return@withContext parsed
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    lastException = e
+                    lastFailure = connectionFailureLabel(e)
+                    Log.w(
+                        "NAVIDROME",
+                        "Network error for endpoint: $endpoint on path ${index + 1}/${serverUrls.size} (${e::class.simpleName})"
                     )
                 }
-                return@withContext emptyList<Any>()
             }
-            val responseContent = response.bodyAsText()
-
-            when {
-                endpoint.startsWith("ping")         -> parsedData.addAll(parseNavidromeStatus(responseContent))
-                endpoint.startsWith("getMusicFolders") -> parsedData.addAll(parseNavidromeLibrariesJSON(responseContent))
-
-                endpoint.startsWith("search3")      -> parsedData.addAll(parseNavidromeSearch3JSON(responseContent, serverUrl, server.username, server.password))
-
-                endpoint.startsWith("getSong")     -> parsedData.addAll(parseNavidromeSongJSON(responseContent, serverUrl, server.username, server.password))
-                endpoint.startsWith("getBookmarks") -> parsedData.addAll(parseNavidromeBookmarksJSON(responseContent, serverUrl, server.username, server.password))
-
-                endpoint.startsWith("getAlbumList") -> parsedData.addAll(parseNavidromeAlbumListJSON(responseContent, serverUrl, server.username, server.password))
-                endpoint.startsWith("getAlbum.")    -> parsedData.addAll(parseNavidromeAlbumJSON(responseContent, serverUrl, server.username, server.password)) // Note: getAlbum.view takes an album ID, typically not musicFolderId
-
-                endpoint.startsWith("getArtists")   -> parsedData.addAll(parseNavidromeArtistsJSON(responseContent))
-                endpoint.startsWith("getArtist.")   -> parsedData.addAll(parseNavidromeArtistAlbumsJSON(responseContent, serverUrl, server.username, server.password))
-                endpoint.startsWith("getArtistInfo")-> parsedData.addAll(listOf(parseNavidromeArtistBiographyJSON(responseContent)))
-
-                endpoint.startsWith("getPlaylists") -> parsedData.addAll(parseNavidromePlaylistsJSON(responseContent, serverUrl, server.username, server.password))
-                endpoint.startsWith("getPlaylist.") -> parsedData.addAll(parseNavidromePlaylistJSON(responseContent, serverUrl, server.username, server.password))
-
-                endpoint.startsWith("getInternetRadioStations") -> parsedData.addAll(parseNavidromeRadioJSON(responseContent))
-
-                endpoint.startsWith("getLyrics.") -> parsedData.addAll(listOf(parseNavidromePlainLyricsJSON(responseContent)))
-                endpoint.startsWith("getLyricsBySongId.") -> parsedData.addAll(parseNavidromeSyncedLyricsJSON(responseContent))
-
-                endpoint.startsWith("getStarred") -> { parsedData.addAll(parseNavidromeFavouritesJSON(responseContent, serverUrl, server.username, server.password)) }
-                endpoint.startsWith("getRandomSongs") -> { parsedData.addAll(parseNavidromeRandomSongsJSON(responseContent, serverUrl, server.username, server.password)) }
-                endpoint.startsWith("getSimilarSongs2") -> { parsedData.addAll(parseNavidromeSimilarSongsJSON(responseContent, serverUrl, server.username, server.password)) }
-                endpoint.startsWith("getSmartMix") -> { parsedData.addAll(parseNavidromeSmartMixJSON(responseContent, serverUrl, server.username, server.password)) }
-                endpoint.startsWith("startStemSplit") || endpoint.startsWith("getStemSplitStatus") -> {
-                    parseNavidromeStemSplitJSON(responseContent)?.let(parsedData::add)
-                }
-
-                endpoint.startsWith("createPlaylist") ||
-                    endpoint.startsWith("updatePlaylist") ||
-                    endpoint.startsWith("deletePlaylist") -> {
-                    if (isSuccessfulSubsonicResponse(responseContent)) {
-                        parsedData.add(true)
-                    }
-                }
-
-                endpoint.startsWith("star") -> { NavidromeManager.setSyncingStatus(false) }
-                endpoint.startsWith("unstar") -> { NavidromeManager.setSyncingStatus(false) }
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
 
             if (endpoint.startsWith("ping")) {
-                navidromeStatus.value = when {
-                    e::class.simpleName?.contains("timeout", ignoreCase = true) == true -> "Connection timed out"
-                    e::class.simpleName?.contains("unresolved", ignoreCase = true) == true -> "Server not found"
-                    e::class.simpleName?.contains("unknownhost", ignoreCase = true) == true -> "Server not found"
-                    e::class.simpleName?.contains("connect", ignoreCase = true) == true -> "Connection refused"
-                    else -> "Connection failed"
-                }
+                navidromeStatus.value = lastFailure
             }
-            // Exception messages may include the full authenticated URL, so log only the type.
-            Log.e("NAVIDROME", "Network error for endpoint: $endpoint (${e::class.simpleName})")
             if (requireSuccess) {
-                if (e is IOException && e.message?.startsWith(endpoint.substringBefore('?')) == true) {
-                    throw e
-                }
                 throw IOException(
-                    "${endpoint.substringBefore('?')} request failed (${e::class.simpleName})"
+                    "${endpoint.substringBefore('?')} request failed ($lastFailure)",
+                    lastException
                 )
             }
+            emptyList()
         } finally {
             NavidromeManager.setSyncingStatus(false)
         }
+    }
 
-        parsedData
+    private fun parseGetResponse(
+        endpoint: String,
+        responseContent: String,
+        serverUrl: String,
+        server: NavidromeProvider
+    ): List<Any> = buildList {
+        when {
+            endpoint.startsWith("ping") -> addAll(parseNavidromeStatus(responseContent))
+            endpoint.startsWith("getMusicFolders") -> addAll(parseNavidromeLibrariesJSON(responseContent))
+            endpoint.startsWith("search3") -> addAll(parseNavidromeSearch3JSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getSong") -> addAll(parseNavidromeSongJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getBookmarks") -> addAll(parseNavidromeBookmarksJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getAlbumList") -> addAll(parseNavidromeAlbumListJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getAlbum.") -> addAll(parseNavidromeAlbumJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getArtists") -> addAll(parseNavidromeArtistsJSON(responseContent))
+            endpoint.startsWith("getArtist.") -> addAll(parseNavidromeArtistAlbumsJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getArtistInfo") -> add(parseNavidromeArtistBiographyJSON(responseContent))
+            endpoint.startsWith("getPlaylists") -> addAll(parseNavidromePlaylistsJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getPlaylist.") -> addAll(parseNavidromePlaylistJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getInternetRadioStations") -> addAll(parseNavidromeRadioJSON(responseContent))
+            endpoint.startsWith("getLyrics.") -> add(parseNavidromePlainLyricsJSON(responseContent))
+            endpoint.startsWith("getLyricsBySongId.") -> addAll(parseNavidromeSyncedLyricsJSON(responseContent))
+            endpoint.startsWith("getStarred") -> addAll(parseNavidromeFavouritesJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getRandomSongs") -> addAll(parseNavidromeRandomSongsJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getSimilarSongs2") -> addAll(parseNavidromeSimilarSongsJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("getSmartMix") -> addAll(parseNavidromeSmartMixJSON(responseContent, serverUrl, server.username, server.password))
+            endpoint.startsWith("startStemSplit") || endpoint.startsWith("getStemSplitStatus") ->
+                parseNavidromeStemSplitJSON(responseContent)?.let(::add)
+            endpoint.startsWith("createPlaylist") ||
+                endpoint.startsWith("updatePlaylist") ||
+                endpoint.startsWith("deletePlaylist") ->
+                if (isSuccessfulSubsonicResponse(responseContent)) add(true)
+        }
+    }
+
+    private fun connectionFailureLabel(error: Exception): String = when {
+        error::class.simpleName?.contains("timeout", ignoreCase = true) == true -> "Connection timed out"
+        error::class.simpleName?.contains("unresolved", ignoreCase = true) == true -> "Server not found"
+        error::class.simpleName?.contains("unknownhost", ignoreCase = true) == true -> "Server not found"
+        error::class.simpleName?.contains("connect", ignoreCase = true) == true -> "Connection refused"
+        else -> "Connection failed"
     }
 
     suspend fun pingNavidromeServer(server: NavidromeProvider? = null): List<String> = withContext(Dispatchers.IO) {

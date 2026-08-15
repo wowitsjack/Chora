@@ -14,12 +14,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,17 +52,40 @@ internal fun IpodAudiobooksScreen(
         return
     }
 
-    val continueListening = remember(books) {
-        books.filter { it.hasStarted && !it.isFinished }.sortedByDescending { it.updatedAt }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val filteredBooks = remember(books, searchQuery) {
+        books.filter { book ->
+            val metadata = book.album.mediaMetadata
+            ipodSearchMatches(
+                searchQuery,
+                metadata.title,
+                metadata.albumTitle,
+                metadata.artist,
+                book.parts.joinToString(" ") { it.mediaMetadata.title?.toString().orEmpty() }
+            )
+        }
     }
-    val downloaded = remember(books) { books.filter(AudiobookBook::isDownloaded) }
-    val finished = remember(books) { books.filter(AudiobookBook::isFinished) }
+    val continueListening = remember(filteredBooks) {
+        filteredBooks.filter { it.hasStarted && !it.isFinished }.sortedByDescending { it.updatedAt }
+    }
+    val downloaded = remember(filteredBooks) { filteredBooks.filter(AudiobookBook::isDownloaded) }
+    val finished = remember(filteredBooks) { filteredBooks.filter(AudiobookBook::isFinished) }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = 1)
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(IpodColors.Content)
     ) {
+        item("books-search") {
+            IpodPullDownSearchBox(searchQuery, { searchQuery = it }, "Search Books")
+        }
+        if (filteredBooks.isEmpty()) {
+            item("books-no-matches") {
+                IpodInlineMessage("No books match “$searchQuery”.")
+            }
+        }
         if (continueListening.isNotEmpty()) {
             item("continue-header") { IpodSectionHeader("Continue Listening") }
             items(continueListening, key = { "continue-${it.id}" }) { book ->
@@ -84,14 +109,16 @@ internal fun IpodAudiobooksScreen(
                 IpodAudiobookRow(book, false, null) { onBookClick(book) }
             }
         }
-        item("all-header") { IpodSectionHeader("All Books") }
-        items(books, key = AudiobookBook::id) { book ->
-            IpodAudiobookRow(
-                book = book,
-                isCurrent = book.parts.any { it.mediaId == currentMediaId },
-                actionLabel = null,
-                onClick = { onBookClick(book) }
-            )
+        if (filteredBooks.isNotEmpty()) {
+            item("all-header") { IpodSectionHeader("All Books") }
+            items(filteredBooks, key = AudiobookBook::id) { book ->
+                IpodAudiobookRow(
+                    book = book,
+                    isCurrent = book.parts.any { it.mediaId == currentMediaId },
+                    actionLabel = null,
+                    onClick = { onBookClick(book) }
+                )
+            }
         }
     }
 }

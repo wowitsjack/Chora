@@ -176,7 +176,7 @@ class SongRepository @Inject constructor(
                 navidromeDataSource.getSmartMix(
                     discoveryRequestForMode(
                         mode = mode,
-                        count = outputLimit,
+                        count = discoveryServerCandidateCount(mode, outputLimit),
                         excludeIds = excludedIds,
                         randomSeed = "${System.currentTimeMillis().toString(36)}-${System.nanoTime().toString(36)}",
                         requestedMood = mood,

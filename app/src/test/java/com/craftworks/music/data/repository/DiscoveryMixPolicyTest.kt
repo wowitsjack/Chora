@@ -38,6 +38,7 @@ class DiscoveryMixPolicyTest {
         assertEquals("arc", requests.getValue(DiscoveryMixMode.SMART).energyCurve)
         assertEquals("rise", requests.getValue(DiscoveryMixMode.ENERGY_RISE).energyCurve)
         assertEquals("fall", requests.getValue(DiscoveryMixMode.COOLDOWN).energyCurve)
+        assertEquals("steady", requests.getValue(DiscoveryMixMode.CHILLOUT).energyCurve)
         assertEquals("relaxed", requests.getValue(DiscoveryMixMode.COOLDOWN).mood)
         assertEquals(0.28f, requests.getValue(DiscoveryMixMode.COOLDOWN).energy)
         assertEquals("instrumental", requests.getValue(DiscoveryMixMode.INSTRUMENTAL).voice)
@@ -53,9 +54,25 @@ class DiscoveryMixPolicyTest {
     }
 
     @Test
-	fun `wind down uses analyzer drive instead of genre names`() {
+    fun `wind down uses analyzer drive instead of genre names`() {
 		assertTrue(!isCredibleCooldownAnalysis(0.72f, 0.72f, 0.78f, 0.1f, 0.1f))
 		assertTrue(isCredibleCooldownAnalysis(0.20f, 0.20f, 0.18f, 0.1f, 0.1f))
+    }
+
+    @Test
+    fun `chillout allows fluid motion and vocals but rejects rigid high drive tracks`() {
+        assertTrue(isCredibleChilloutAnalysis(0.36f, 0.93f, 0.32f, 0.08f, 11.5f))
+        assertTrue(isCredibleChilloutAnalysis(0.34f, 0.04f, 0.57f, 0.01f, 5.1f))
+		assertTrue(isCredibleChilloutAnalysis(0.36f, 0.05f, 0.49f, 0.01f, 12.1f, 0.386f))
+		assertTrue(!isCredibleChilloutAnalysis(0.35f, 0.09f, 0.15f, 0.04f, 19.6f, 0.447f))
+        assertTrue(!isCredibleChilloutAnalysis(0.69f, 0.94f, 0.93f, 0.55f, 6.4f))
+        assertTrue(!isCredibleChilloutAnalysis(0.60f, 0.98f, 0.21f, 0.38f, 5.3f))
+    }
+
+    @Test
+    fun `chillout overfetches analyzer candidates before strict client filtering`() {
+        assertEquals(200, discoveryServerCandidateCount(DiscoveryMixMode.CHILLOUT, 50))
+        assertEquals(50, discoveryServerCandidateCount(DiscoveryMixMode.SMART, 50))
     }
 
     @Test

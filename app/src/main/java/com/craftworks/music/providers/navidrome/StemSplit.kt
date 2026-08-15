@@ -19,6 +19,7 @@ data class StemSplitResponse(
     val bitrate: Int = 320
 ) {
     val isReady: Boolean get() = status == "ready"
+    val isWorking: Boolean get() = status in setOf("checking", "queued", "uploading", "splitting", "finalizing")
     val isTerminalFailure: Boolean get() = status == "failed" || status == "disabled"
 }
 

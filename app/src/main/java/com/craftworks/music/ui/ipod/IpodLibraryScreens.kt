@@ -22,14 +22,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,13 +68,35 @@ internal fun IpodSongsScreen(
         }
         return
     }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val filteredSongs = remember(songs, searchQuery) {
+        songs.filter { song ->
+            val metadata = song.mediaMetadata
+            ipodSearchMatches(
+                searchQuery,
+                metadata.title,
+                metadata.artist,
+                metadata.albumTitle
+            )
+        }
+    }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = 1)
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(IpodColors.Content)
     ) {
+        item(key = "songs-search") {
+            IpodPullDownSearchBox(searchQuery, { searchQuery = it }, "Search Songs")
+        }
+        if (filteredSongs.isEmpty()) {
+            item(key = "songs-no-matches") {
+                IpodInlineMessage("No songs match “$searchQuery”.")
+            }
+        }
         itemsIndexed(
-            items = songs,
+            items = filteredSongs,
             key = { index, song -> "${song.mediaId}-$index" }
         ) { _, song ->
             IpodSongRow(
@@ -97,14 +125,28 @@ internal fun IpodArtistsScreen(
         }
         return
     }
-    val groups = remember(artists) {
-        artists.groupBy { itemIndexLabel(it.name) }.toSortedMap()
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val filteredArtists = remember(artists, searchQuery) {
+        artists.filter { ipodSearchMatches(searchQuery, it.name) }
     }
+    val groups = remember(filteredArtists) {
+        filteredArtists.groupBy { itemIndexLabel(it.name) }.toSortedMap()
+    }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = 1)
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(IpodColors.Content)
     ) {
+        item(key = "artists-search") {
+            IpodPullDownSearchBox(searchQuery, { searchQuery = it }, "Search Artists")
+        }
+        if (filteredArtists.isEmpty()) {
+            item(key = "artists-no-matches") {
+                IpodInlineMessage("No artists match “$searchQuery”.")
+            }
+        }
         groups.forEach { (letter, group) ->
             stickyHeader(key = "artist-$letter") {
                 IpodSectionHeader(letter)
@@ -145,34 +187,83 @@ internal fun IpodPlaylistsScreen(
             DiscoveryMixMode.REDISCOVER,
             DiscoveryMixMode.ENERGY_RISE,
             DiscoveryMixMode.COOLDOWN,
+            DiscoveryMixMode.CHILLOUT,
             DiscoveryMixMode.INSTRUMENTAL,
             DiscoveryMixMode.HARMONIC
         )
     }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val filteredBuilderModes = remember(builderModes, searchQuery) {
+        builderModes.filter { ipodSearchMatches(searchQuery, it.title, it.description) }
+    }
+    val filteredPlaylists = remember(playlists, searchQuery) {
+        playlists.filter { playlist ->
+            ipodSearchMatches(
+                searchQuery,
+                playlist.mediaMetadata.title,
+                playlist.mediaMetadata.description
+            )
+        }
+    }
+    val favoritesMatches = ipodSearchMatches(searchQuery, "Favorites", "Songs you've starred")
+    val discoveryModeMatches = discoveryMixMode?.let {
+        ipodSearchMatches(searchQuery, it.title, it.description)
+    } == true
+    val filteredDiscoverySongs = remember(discoveryMixSongs, discoveryMixMode, searchQuery) {
+        if (searchQuery.isBlank() || discoveryModeMatches) {
+            discoveryMixSongs
+        } else {
+            discoveryMixSongs.filter { song ->
+                val metadata = song.mediaMetadata
+                ipodSearchMatches(
+                    searchQuery,
+                    metadata.title,
+                    metadata.artist,
+                    metadata.albumTitle,
+                    metadata.extras?.getString(DiscoveryMetadataKeys.REASON)
+                )
+            }
+        }
+    }
+    val showGeneratedMix = discoveryMixMode != null && filteredDiscoverySongs.isNotEmpty()
+    val hasMatches = filteredBuilderModes.isNotEmpty() ||
+        showGeneratedMix || favoritesMatches || filteredPlaylists.isNotEmpty()
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = 1)
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .background(IpodColors.Content)
     ) {
-        item(key = "smart-playlists-header") {
-            IpodSectionHeader("Smart Playlists")
+        item(key = "playlists-search") {
+            IpodPullDownSearchBox(searchQuery, { searchQuery = it }, "Search Playlists")
         }
-        itemsIndexed(
-            items = builderModes,
-            key = { _, mode -> "builder-${mode.apiValue}" }
-        ) { _, mode ->
-            val isBuilding = discoveryMixBuilding == mode
-            IpodListRow(
-                title = if (isBuilding) "Building ${mode.title}…" else mode.title,
-                subtitle = mode.description,
-                showChevron = discoveryMixBuilding == null,
-                onClick = {
-                    if (discoveryMixBuilding == null) onBuildDiscoveryMix(mode)
-                }
-            )
+        if (!hasMatches && searchQuery.isNotBlank()) {
+            item(key = "playlists-no-matches") {
+                IpodInlineMessage("No playlists match “$searchQuery”.")
+            }
+        }
+        if (filteredBuilderModes.isNotEmpty()) {
+            item(key = "smart-playlists-header") {
+                IpodSectionHeader("Smart Playlists")
+            }
+            itemsIndexed(
+                items = filteredBuilderModes,
+                key = { _, mode -> "builder-${mode.apiValue}" }
+            ) { _, mode ->
+                val isBuilding = discoveryMixBuilding == mode
+                IpodListRow(
+                    title = if (isBuilding) "Building ${mode.title}…" else mode.title,
+                    subtitle = mode.description,
+                    showChevron = discoveryMixBuilding == null,
+                    onClick = {
+                        if (discoveryMixBuilding == null) onBuildDiscoveryMix(mode)
+                    }
+                )
+            }
         }
 
-        if (discoveryMixMode != null && discoveryMixSongs.isNotEmpty()) {
+        if (showGeneratedMix) {
             item(key = "generated-mix-header") {
                 IpodSectionHeader("Generated ${discoveryMixMode.title}")
             }
@@ -184,7 +275,7 @@ internal fun IpodPlaylistsScreen(
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Text(
-                        text = "${discoveryMixSongs.size} songs. No awkward hand-offs.",
+                        text = "${discoveryMixSongs.size} songs",
                         color = IpodColors.SecondaryText,
                         fontSize = 13.sp,
                         lineHeight = 16.sp
@@ -208,7 +299,7 @@ internal fun IpodPlaylistsScreen(
                 }
             }
             itemsIndexed(
-                items = discoveryMixSongs.take(5),
+                items = filteredDiscoverySongs.take(5),
                 key = { index, song -> "preview-${song.mediaId}-$index" }
             ) { index, song ->
                 val metadata = song.mediaMetadata
@@ -233,36 +324,40 @@ internal fun IpodPlaylistsScreen(
             }
         }
 
-        item(key = "library-playlists-header") {
-            IpodSectionHeader("Library Playlists")
-        }
-        item(key = "favorites-playlist") {
-            IpodListRow(
-                title = "Favorites",
-                subtitle = "Songs you've starred",
-                showChevron = true,
-                onClick = { onPlaylistClick(favoritesPlaylist) }
-            )
-        }
-        if (playlists.isEmpty()) {
-            item(key = "playlist-empty") {
-                IpodInlineMessage(
-                    if (loading) "Loading your playlists…"
-                    else "No saved playlists yet. Build one above."
+        if (favoritesMatches || filteredPlaylists.isNotEmpty() || searchQuery.isBlank()) {
+            item(key = "library-playlists-header") {
+                IpodSectionHeader("Library Playlists")
+            }
+            if (favoritesMatches) {
+                item(key = "favorites-playlist") {
+                    IpodListRow(
+                        title = "Favorites",
+                        subtitle = "Songs you've starred",
+                        showChevron = true,
+                        onClick = { onPlaylistClick(favoritesPlaylist) }
+                    )
+                }
+            }
+            if (playlists.isEmpty() && searchQuery.isBlank()) {
+                item(key = "playlist-empty") {
+                    IpodInlineMessage(
+                        if (loading) "Loading your playlists…"
+                        else "No saved playlists yet. Build one above."
+                    )
+                }
+            }
+            itemsIndexed(
+                items = filteredPlaylists,
+                key = { index, playlist -> "${playlist.mediaId}-$index" }
+            ) { _, playlist ->
+                val count = playlist.mediaMetadata.extras?.getInt("songCount")
+                IpodListRow(
+                    title = playlist.mediaMetadata.title?.toString() ?: "Untitled Playlist",
+                    subtitle = count?.takeIf { it > 0 }?.let { "$it songs" },
+                    showChevron = true,
+                    onClick = { onPlaylistClick(playlist) }
                 )
             }
-        }
-        itemsIndexed(
-            items = playlists,
-            key = { index, playlist -> "${playlist.mediaId}-$index" }
-        ) { _, playlist ->
-            val count = playlist.mediaMetadata.extras?.getInt("songCount")
-            IpodListRow(
-                title = playlist.mediaMetadata.title?.toString() ?: "Untitled Playlist",
-                subtitle = count?.takeIf { it > 0 }?.let { "$it songs" },
-                showChevron = true,
-                onClick = { onPlaylistClick(playlist) }
-            )
         }
     }
 }
@@ -282,6 +377,19 @@ internal fun IpodAlbumsScreen(
         }
         return
     }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val filteredAlbums = remember(albums, searchQuery) {
+        albums.filter { album ->
+            val metadata = album.mediaMetadata
+            ipodSearchMatches(
+                searchQuery,
+                metadata.albumTitle,
+                metadata.title,
+                metadata.artist
+            )
+        }
+    }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = 1)
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -289,12 +397,27 @@ internal fun IpodAlbumsScreen(
     ) {
         val columns = if (maxWidth >= 600.dp) 4 else 2
         LazyVerticalGrid(
+            state = gridState,
             columns = GridCells.Fixed(columns),
             contentPadding = PaddingValues(6.dp),
             modifier = Modifier.fillMaxSize()
         ) {
+            item(
+                key = "albums-search",
+                span = { GridItemSpan(maxLineSpan) }
+            ) {
+                IpodPullDownSearchBox(searchQuery, { searchQuery = it }, "Search Albums")
+            }
+            if (filteredAlbums.isEmpty()) {
+                item(
+                    key = "albums-no-matches",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
+                    IpodInlineMessage("No albums match “$searchQuery”.")
+                }
+            }
             itemsIndexed(
-                items = albums,
+                items = filteredAlbums,
                 key = { index, album -> "${album.mediaId}-$index" }
             ) { _, album ->
                 IpodAlbumCell(
@@ -1069,7 +1192,7 @@ internal fun IpodActionButton(
 }
 
 @Composable
-private fun IpodInlineMessage(text: String) {
+internal fun IpodInlineMessage(text: String) {
     Text(
         text = text,
         color = IpodColors.SecondaryText,

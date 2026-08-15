@@ -2,25 +2,28 @@
 
 package com.craftworks.music.ui.playing
 
-import android.os.SystemClock
 import android.util.Log
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -37,7 +40,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -64,6 +67,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -89,8 +93,98 @@ import com.craftworks.music.ui.elements.bounceClick
 import com.craftworks.music.ui.elements.dialogs.SleepTimerDialog
 import com.craftworks.music.ui.elements.moveClick
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+
+@Composable
+internal fun NowPlayingLibraryActions(
+    color: Color,
+    isFavorite: Boolean,
+    downloadQueued: Boolean,
+    actionsEnabled: Boolean,
+    downloadEnabled: Boolean,
+    onDownload: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onHide: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        NowPlayingLibraryActionButton(
+            label = if (downloadQueued) "Queued" else "Download",
+            icon = ImageVector.vectorResource(R.drawable.rounded_download_24),
+            contentDescription = if (downloadQueued) "Download queued" else "Download song",
+            color = color,
+            selected = downloadQueued,
+            enabled = downloadEnabled,
+            weight = 1f,
+            onClick = onDownload
+        )
+        NowPlayingLibraryActionButton(
+            label = "Favorite",
+            icon = ImageVector.vectorResource(
+                if (isFavorite) R.drawable.round_star_24 else R.drawable.round_star_border_24
+            ),
+            contentDescription = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+            color = color,
+            selected = isFavorite,
+            enabled = actionsEnabled,
+            weight = 1.15f,
+            onClick = onToggleFavorite
+        )
+        NowPlayingLibraryActionButton(
+            label = "Hide",
+            icon = ImageVector.vectorResource(R.drawable.round_visibility_off_24),
+            contentDescription = "Hide song from library",
+            color = color,
+            selected = false,
+            enabled = actionsEnabled,
+            weight = 0.85f,
+            onClick = onHide
+        )
+    }
+}
+
+@Composable
+private fun RowScope.NowPlayingLibraryActionButton(
+    label: String,
+    icon: ImageVector,
+    contentDescription: String,
+    color: Color,
+    selected: Boolean,
+    enabled: Boolean,
+    weight: Float,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .weight(weight)
+            .height(44.dp),
+        shape = RoundedCornerShape(14.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = color.copy(alpha = if (selected) 0.24f else 0.12f),
+            contentColor = color,
+            disabledContainerColor = color.copy(alpha = 0.06f),
+            disabledContentColor = color.copy(alpha = 0.30f)
+        )
+    ) {
+        Icon(icon, contentDescription, modifier = Modifier.size(19.dp))
+        androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Preview(showBackground = true)
@@ -101,10 +195,13 @@ fun PlaybackProgressSlider(
     metadata: MediaMetadata? = null
 ) {
     var currentValue by remember { mutableLongStateOf(0L) }
-    val currentDuration by remember(mediaController?.duration) {
-        derivedStateOf {
-            mediaController?.duration?.coerceAtLeast(0L)
-        }
+    var currentDuration by remember(mediaController, metadata?.durationMs) {
+        mutableLongStateOf(
+            mediaController?.duration
+                ?.takeIf { it != C.TIME_UNSET && it > 0L }
+                ?: metadata?.durationMs?.takeIf { it > 0L }
+                ?: 0L
+        )
     }
 
     val animatedValue by animateFloatAsState(
@@ -121,33 +218,22 @@ fun PlaybackProgressSlider(
     var isInteracting by remember { mutableStateOf(false) }
 
     var isPlaying by remember { mutableStateOf(false) }
-    var lastPositionSampleAt by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
 
-    LaunchedEffect(mediaController, isPlaying) {
-        if (mediaController != null && isPlaying) {
-            while (isActive && !isInteracting) {
-                val now = SystemClock.elapsedRealtime()
+    LaunchedEffect(mediaController, isPlaying, isInteracting) {
+        if (mediaController != null && !isInteracting) {
+            do {
+                currentDuration = mediaController.duration
+                    .takeIf { it != C.TIME_UNSET && it > 0L }
+                    ?: metadata?.durationMs?.takeIf { it > 0L }
+                    ?: 0L
                 currentValue = stablePlaybackPosition(
                     previousPositionMs = currentValue,
                     reportedPositionMs = mediaController.currentPosition,
-                    elapsedMs = now - lastPositionSampleAt,
-                    isPlaying = true,
-                    durationMs = currentDuration ?: 0L
+                    isPlaying = mediaController.isPlaying,
+                    durationMs = currentDuration
                 )
-                lastPositionSampleAt = now
-                delay(100L)  // Update 10x per second for smooth progress
-            }
-        } else {
-            if (mediaController != null) {
-                currentValue = stablePlaybackPosition(
-                    previousPositionMs = currentValue,
-                    reportedPositionMs = mediaController.currentPosition,
-                    elapsedMs = 0L,
-                    isPlaying = false,
-                    durationMs = currentDuration ?: 0L
-                )
-                lastPositionSampleAt = SystemClock.elapsedRealtime()
-            }
+                if (mediaController.isPlaying) delay(100L)
+            } while (mediaController.isPlaying && !isInteracting)
         }
     }
 
@@ -176,18 +262,19 @@ fun PlaybackProgressSlider(
                     currentValue = stablePlaybackPosition(
                         previousPositionMs = currentValue,
                         reportedPositionMs = newPosition.positionMs,
-                        elapsedMs = 0L,
                         isPlaying = mediaController.isPlaying,
-                        durationMs = currentDuration ?: 0L,
+                        durationMs = currentDuration,
                         allowDiscontinuity = true
                     )
-                    lastPositionSampleAt = SystemClock.elapsedRealtime()
                 }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 currentValue = mediaController.currentPosition.coerceAtLeast(0L)
-                lastPositionSampleAt = SystemClock.elapsedRealtime()
+                currentDuration = mediaController.duration
+                    .takeIf { it != C.TIME_UNSET && it > 0L }
+                    ?: mediaItem?.mediaMetadata?.durationMs?.takeIf { it > 0L }
+                    ?: 0L
             }
         }
 
@@ -195,8 +282,7 @@ fun PlaybackProgressSlider(
 
         // Initial check in case state changed before listener was attached or for initial setup
         isPlaying = mediaController.isPlaying
-        currentValue = mediaController.currentPosition
-        lastPositionSampleAt = SystemClock.elapsedRealtime()
+        currentValue = mediaController.currentPosition.coerceAtLeast(0L)
 
         onDispose {
             mediaController.removeListener(listener)
@@ -215,10 +301,14 @@ fun PlaybackProgressSlider(
                     focused.value = it.isFocused
                 }
                 .onKeyEvent { keyEvent ->
-                    val duration = currentDuration ?: 0L
+                    val duration = currentDuration
                     when {
                         keyEvent.key == Key.DirectionRight && keyEvent.type == KeyEventType.KeyDown -> {
-                            currentValue = (currentValue + 5000).coerceIn(0L, duration)
+                            currentValue = if (duration > 0L) {
+                                (currentValue + 5000).coerceIn(0L, duration)
+                            } else {
+                                currentValue + 5000
+                            }
                             mediaController?.seekTo(currentValue)
                             true
                         }
@@ -241,7 +331,7 @@ fun PlaybackProgressSlider(
                 isInteracting = false
                 mediaController?.seekTo(currentValue)
             },
-            valueRange = 0f..(currentDuration?.toFloat() ?: 0f),
+            valueRange = 0f..currentDuration.coerceAtLeast(1L).toFloat(),
             colors = SliderDefaults.colors(
                 activeTrackColor = color,
                 inactiveTrackColor = color.copy(alpha = 0.25f),
@@ -267,9 +357,8 @@ fun PlaybackProgressSlider(
                 maxLines = 1
             )
             Text(
-                text = remember(currentDuration) {
-                    val durationMs = currentDuration ?: 0L
-                    if (durationMs > 0) formatMilliseconds((durationMs / 1000).toInt())
+                text = remember(currentDuration, currentValue) {
+                    if (currentDuration > 0) formatMilliseconds((currentDuration / 1000).toInt())
                     else formatMilliseconds((currentValue / 1000).toInt())
                 },
                 fontWeight = FontWeight.Light,
@@ -506,14 +595,12 @@ fun LyricsButton(
             }
         },
         shape = RoundedCornerShape(12.dp),
-        modifier =
-        if (lyrics.isNotEmpty() || isLoading)
-            Modifier
-                .bounceClick()
-                .height(size + 6.dp)
-        else
-            Modifier.height(size + 6.dp),
-        contentPadding = PaddingValues(6.dp),
+        modifier = if (lyrics.isNotEmpty() || isLoading) {
+            Modifier.size(size).bounceClick()
+        } else {
+            Modifier.size(size)
+        },
+        contentPadding = PaddingValues(0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             disabledContainerColor = Color.Transparent,
@@ -533,19 +620,39 @@ fun LyricsButton(
                     imageVector = ImageVector.vectorResource(R.drawable.lyrics_active),
                     contentDescription = "Close Lyrics",
                     modifier = Modifier
-                        .height(size)
-                        .size(size)
+                        .size(size * 0.58f)
                 )
 
                 else -> Icon(
                     imageVector = ImageVector.vectorResource(R.drawable.lyrics_inactive),
                     contentDescription = "View Lyrics",
                     modifier = Modifier
-                        .height(size)
-                        .size(size)
+                        .size(size * 0.58f)
                 )
             }
         }
+    }
+}
+
+@Composable
+fun LyricsCloseButton(
+    color: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(color.copy(alpha = 0.12f))
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Close,
+            contentDescription = "Close lyrics",
+            tint = color,
+            modifier = Modifier.size(24.dp)
+        )
     }
 }
 
@@ -557,7 +664,8 @@ fun PlayQueueButton(
     Button(
         onClick = { playQueueOpen = true },
         shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(6.dp),
+        modifier = Modifier.size(size),
+        contentPadding = PaddingValues(0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             disabledContainerColor = Color.Transparent,
@@ -569,8 +677,7 @@ fun PlayQueueButton(
             imageVector = ImageVector.vectorResource(R.drawable.s_m_playback),
             contentDescription = stringResource(R.string.Queue_Title),
             modifier = Modifier
-                .height(size)
-                .size(size)
+                .size(size * 0.58f)
         )
     }
 }
@@ -596,13 +703,12 @@ fun DownloadButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
         },
         enabled = enabled,
         shape = RoundedCornerShape(12.dp),
-        modifier = if (enabled) // Disable bounce click if song is local
-            Modifier
-                .bounceClick()
-                .height(size + 6.dp)
-        else
-            Modifier.height(size + 6.dp),
-        contentPadding = PaddingValues(6.dp),
+        modifier = if (enabled) {
+            Modifier.size(size).bounceClick()
+        } else {
+            Modifier.size(size)
+        },
+        contentPadding = PaddingValues(0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             disabledContainerColor = Color.Transparent,
@@ -614,8 +720,7 @@ fun DownloadButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
             imageVector = ImageVector.vectorResource(R.drawable.rounded_download_24),
             contentDescription = "Download Song",
             modifier = Modifier
-                .height(size)
-                .size(size)
+                .size(size * 0.58f)
         )
     }
 }
@@ -654,13 +759,12 @@ fun FavoriteButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
         },
         enabled = enabled,
         shape = RoundedCornerShape(12.dp),
-        modifier = if (enabled)
-            Modifier
-                .bounceClick()
-                .height(size + 6.dp)
-        else
-            Modifier.height(size + 6.dp),
-        contentPadding = PaddingValues(6.dp),
+        modifier = if (enabled) {
+            Modifier.size(size).bounceClick()
+        } else {
+            Modifier.size(size)
+        },
+        contentPadding = PaddingValues(0.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             disabledContainerColor = Color.Transparent,
@@ -675,8 +779,7 @@ fun FavoriteButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
             ),
             contentDescription = if (isStarred) "Remove from Favorites" else "Add to Favorites",
             modifier = Modifier
-                .height(size)
-                .size(size),
+                .size(size * 0.58f),
             tint = color.copy(alpha = if (isStarred) 1f else 0.5f)
         )
     }

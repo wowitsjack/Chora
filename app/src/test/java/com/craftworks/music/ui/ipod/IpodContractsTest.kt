@@ -119,6 +119,14 @@ class IpodContractsTest {
     }
 
     @Test
+    fun pullDownSearchMatchesEveryTermAcrossVisibleMetadata() {
+        assertTrue(ipodSearchMatches("mass attack", "Teardrop", "Massive Attack", "Mezzanine"))
+        assertTrue(ipodSearchMatches("tear mezz", "Teardrop", "Massive Attack", "Mezzanine"))
+        assertFalse(ipodSearchMatches("tear dummy", "Teardrop", "Massive Attack", "Mezzanine"))
+        assertTrue(ipodSearchMatches("   ", "Anything"))
+    }
+
+    @Test
     fun nowPlayingArtworkIsCappedToFirstGenWidthOnTallPhones() {
         val geometry = calculateIpodNowPlayingMediaGeometry(
             containerWidthDp = 360f,

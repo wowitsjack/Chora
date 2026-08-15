@@ -8,6 +8,7 @@ import com.craftworks.music.data.database.dao.ArtistDao
 import com.craftworks.music.data.database.dao.SongDao
 import com.craftworks.music.data.database.dao.SyncMetadataDao
 import com.craftworks.music.data.database.entity.SyncMetadata
+import com.craftworks.music.data.database.entity.SongEntity
 import com.craftworks.music.data.database.entity.toEntity
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import com.craftworks.music.data.model.MediaData
@@ -36,6 +37,11 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val SONG_SYNC_UPSERT_BATCH_SIZE = 400
+
+internal fun shouldFlushSongSyncBatch(pendingCount: Int): Boolean =
+    pendingCount >= SONG_SYNC_UPSERT_BATCH_SIZE
 
 enum class SyncPhase {
     IDLE, FETCHING_COUNTS, ARTISTS, ALBUMS, SONGS, COMPLETE, ERROR
@@ -598,6 +604,7 @@ class SyncRepository @Inject constructor(
             val concurrency = 4 // Avoid saturating high-latency VPN links during large syncs.
             val semaphore = Semaphore(concurrency)
             val songInsertMutex = Mutex()
+            val pendingSongEntities = mutableListOf<SongEntity>()
             val progressUpdateMutex = Mutex()
 
             coroutineScope {
@@ -619,7 +626,8 @@ class SyncRepository @Inject constructor(
                                 forceRefresh,
                                 syncStartedAt,
                                 existingSongIds,
-                                songInsertMutex
+                                songInsertMutex,
+                                pendingSongEntities
                             ) { newCount, updatedCount ->
                                 newSongsCount.addAndGet(newCount)
                                 updatedSongsCount.addAndGet(updatedCount)
@@ -649,6 +657,10 @@ class SyncRepository @Inject constructor(
                 jobs.awaitAll()
             }
 
+            songInsertMutex.withLock {
+                flushPendingSongEntities(pendingSongEntities)
+            }
+
             // Check for pause/cancel after parallel section
             if (shouldPauseOrCancel()) {
                 return handlePauseOrCancel(SyncPhase.SONGS)
@@ -673,6 +685,7 @@ class SyncRepository @Inject constructor(
                         syncStartedAt = syncStartedAt,
                         existingSongIds = existingSongIds,
                         insertMutex = songInsertMutex,
+                        pendingSongEntities = pendingSongEntities,
                         maxRetries = 0,
                         onSongCounts = { newCount, updatedCount ->
                             newSongsCount.addAndGet(newCount)
@@ -682,6 +695,9 @@ class SyncRepository @Inject constructor(
                     if (recovered) recoveredIds.add(albumId)
                 }
                 failedAlbumsMutex.withLock { failedAlbums.removeAll(recoveredIds) }
+                songInsertMutex.withLock {
+                    flushPendingSongEntities(pendingSongEntities)
+                }
             }
 
             if (failedAlbumsMutex.withLock { failedAlbums.isNotEmpty() }) {
@@ -729,6 +745,7 @@ class SyncRepository @Inject constructor(
         syncStartedAt: Long,
         existingSongIds: Set<String>,
         insertMutex: Mutex,
+        pendingSongEntities: MutableList<SongEntity>,
         maxRetries: Int = 2,
         onSongCounts: (newCount: Int, updatedCount: Int) -> Unit
     ): Boolean {
@@ -760,10 +777,10 @@ class SyncRepository @Inject constructor(
                     val (newSongs, existingSongs) = entities.partition { it.navidromeID !in existingSongIds }
 
                     insertMutex.withLock {
-                        // Upsert every seen song so its metadata and sync marker
-                        // stay current before stale rows are reconciled.
-                        songDao.insertAll(entities)
-                        entities.forEach { audiobookProgressRepository.seedFromServerSong(it) }
+                        pendingSongEntities.addAll(entities)
+                        if (shouldFlushSongSyncBatch(pendingSongEntities.size)) {
+                            flushPendingSongEntities(pendingSongEntities)
+                        }
                         if (
                             album.mediaCategory != MediaCategory.AUDIOBOOK &&
                             entities.any { it.mediaCategory == MediaCategory.AUDIOBOOK }
@@ -791,6 +808,14 @@ class SyncRepository @Inject constructor(
 
         Log.e("SyncRepository", "Failed to sync album ${album.navidromeID} after $maxRetries retries", lastException)
         return false
+    }
+
+    private suspend fun flushPendingSongEntities(pending: MutableList<SongEntity>) {
+        if (pending.isEmpty()) return
+        val batch = pending.toList()
+        pending.clear()
+        songDao.insertAll(batch)
+        batch.forEach { audiobookProgressRepository.seedFromServerSong(it) }
     }
 
     private suspend fun syncAlbumSongsParallel(

@@ -48,6 +48,7 @@ data class DiscoveryTrackAnalysis(
     val key: String = "",
     val camelot: String = "",
     val keyConfidence: Float = 0f,
+	val harmonicTurbulence: Float = 0f,
     val danceability: Float = 0f,
     val energy: Float = 0f,
     val arousal: Float = 0f,
@@ -175,12 +176,15 @@ fun parseNavidromeSmartMixJSON(
                     match.reason.joinToString(" · ") { it.label }.ifBlank { "Smart musical match" }
                 )
                 putFloat(DiscoveryMetadataKeys.BPM, analysis.bpm)
+                putFloat(DiscoveryMetadataKeys.BPM_CONFIDENCE, analysis.bpmConfidence)
                 putString(DiscoveryMetadataKeys.KEY, analysis.key)
                 putString(DiscoveryMetadataKeys.CAMELOT, analysis.camelot)
+				putFloat(DiscoveryMetadataKeys.HARMONIC_TURBULENCE, analysis.harmonicTurbulence)
                 putFloat(DiscoveryMetadataKeys.ENERGY, analysis.energy)
                 putFloat(DiscoveryMetadataKeys.AROUSAL, analysis.arousal)
                 putFloat(DiscoveryMetadataKeys.VALENCE, analysis.valence)
                 putFloat(DiscoveryMetadataKeys.DANCEABILITY, analysis.danceability)
+                putFloat(DiscoveryMetadataKeys.LOUDNESS_RANGE, analysis.loudnessRange)
                 putString(DiscoveryMetadataKeys.MOOD, analysis.mood.dominantLabel())
                 putFloat(DiscoveryMetadataKeys.MOOD_AGGRESSIVE, analysis.mood.aggressive)
                 putFloat(DiscoveryMetadataKeys.MOOD_RELAXED, analysis.mood.relaxed)
